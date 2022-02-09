@@ -1,0 +1,132 @@
+
+I just uploaded the new CF ensemble code to github. 
+
+Below are the notebooks that demonstrate how stacking works using scikit-learn's modules. 
+
+demo-stacking.ipynb  # regular stacking (for classification and regression)
+demo-cf-stacking.ipynb # CF ensemble method as a stacker
+
+`demo-cf-stacking` is another notebook that demonstrates key functions in CF ensemble codes using
+scikit-learn's stacking module as the basis. This notebook is incomplete at the moment (
+optimization part is yet to be included)
+
+In particular, please look for the class definition `CFStacker` in `utils_stacking.py` and 
+see how it works. It's intended to work just like the regular stacker class `StackingClassifier`
+available in scikit-learn. 
+
+Below are new files added to the code base in addition to the Jupyter notebooks:
+
+utils_stacking.py 
+utils_classifiers.py
+
+I also made a few updates on the following modules: 
+
+cf.py 
+utils_cf.py # <<< most updates are here
+cluster.py 
+evaluate.py
+
+
+
+### Todo ### 
+- replace plotly.plotly (deprecated)
+
+# balance classe weights 
+TP TN FP FN 
+3  10 1  6 
+
+T: 4 
+F: 16 
+
+total=20 
+
+20/3, 20/10, 20/1, 20/6
+
+
+# probability filter, confidence matrix
+
+# polarity matrix, color matrix 
+polarity: {1, -1}, -1 for FP, FN and 1 for TP, TN
+
+
+# Cascade mode 
+  - Consider R and T i.e. the probability matrix associated with the training and test split
+
+# Parameters
+ 
+  - conf_measure
+        'uniform' 
+
+# confidence matrix 
+  
+  evalConfidenceMatrix()
+     toConfidenceMatrix()
+     
+     estimateLabels()
+     
+     make_over()
+     
+  correctness matrix 
+  
+  color matrix  
+     
+     
+# Confidence scoring matrix
+
+  confidence2D()
+      confidence_pointwise_ensemble_prediction() 
+      condidence_brier()
+     
+     
+wmf_ensemble_suite_multimodel() 
+
+test_wmf_probs_suite()
+
+   wmf_ensemble_suite() 
+       wmf_ensemble( )
+          wmf_ensemble_iter2()
+          
+
+
+# Guesstimate the probability filter matrix (mask) based on statistics in the training data 
+
+- for each classifier, do kernel density estimate (KDE) on its probability vectors
+  <challenges> 
+     - ks cannot differentiate TPs from FPs (their distributions are too similar under KS statistic) 
+     - relative skew, relative kurtosis (wrt the knn of the query point) seem different
+     ... note [1]
+
+polarity_modeling()
+  polarity_feature_extraction()
+  
+  get_vars_hstats()
+  
+estimateLabels()
+
+
+
+# Compute Probability Filter matrix
+
+mask_over() 
+   filter_along_item_axis()
+   
+   filter_along_user_axis()
+   
+   
+C: confidence matrix
+
+# probability filter matrix /mask
+  - probability matrix => threshold (fmax) 
+  - given p_th and labels => filter (training set)
+  - for test set, more involved
+
+# Confidence Matrix 
+  - elementwise product between confidence scores (each c x d has a score) and the filter
+
+toConfidenceMatrix()  # <<< 
+
+Note
+----
+[1]     * *ks cannot differentiate TPs from FPs (their distributions are too similar under KS statistic)*
+    * *however, relative skew, relative kurtosis (wrt the knn of the query point) seem different*
+        * FP seems to have larger absolute relative skew and kurtosis

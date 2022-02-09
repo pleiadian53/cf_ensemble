@@ -1,0 +1,6 @@
+### Errors 
+
+ImportError: 
+The plotly.plotly module is deprecated,
+please install the chart-studio package and use the
+chart_studio.plotly module instead. 
