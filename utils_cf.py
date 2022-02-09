@@ -1983,7 +1983,7 @@ def estimateLabelMatrix(R, L=[], p_th=[], pos_label=1, neg_label=0, ratio_small_
         assert ratio_small_class > 0, "Minority class ratio must be > 0 in order to get an estimate of top k probabilities."
         p_th = estimateProbThresholds(R, L=[], pos_label=pos_label, policy='ratio', ratio_small_class=ratio_small_class)
         Lh = np.where(R >= np.array(p_th)[:, None], pos_label, neg_label)
-        
+
     else: 
         median_predictions = np.median(R, axis=0)
         mean_predictions = np.mean(R, axis=0)
@@ -9954,20 +9954,20 @@ def polarity_to_preference(**kargs):
     return to_preference(**kargs)
 def to_preference_matrix(**kargs):
     return to_preference(**kargs)
-def to_preference(Po, beta_neutral=0.0):
-    import scipy.sparse as sparse
+def to_preference(Po, neutral=0.0):
+    import scipy.sparse as sparse 
     # polarity matrix to preference matrix 
-    # assert beta_neutral < 1 and beta_neutral >= 0.0
+    # assert neutral < 1 and neutral >= 0.0
 
     P = np.ones(Po.shape)  
     if sparse.issparse(Po): 
         Pa = Po.toarray()
-        P[Pa==0] = beta_neutral      # masking neutral
+        P[Pa==0] = neutral      # masking neutral
         P[Pa > 0] = 1.0
         P[Pa < 0] = 0.0    # masking negative
         P = sparse.csr_matrix(P)
     else: 
-        P[Po==0] = beta_neutral  # masking neutral
+        P[Po==0] = neutral  # masking neutral
         P[Po > 0] = 1.0
         P[Po < 0] = 0.0  # masking negative
     return P # {0, 1}
