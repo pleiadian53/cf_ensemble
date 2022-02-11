@@ -522,6 +522,7 @@ class CFStacker(ClassifierMixin, _BaseCF):
         passthrough=False,        
         verbose=0,
 
+        save_itermediate_data=True,
         fold_number = 0, 
         data_dir = 'data',
         model_dir = 'model', 
@@ -541,7 +542,7 @@ class CFStacker(ClassifierMixin, _BaseCF):
             verbose=verbose,
 
             # Parameters for data and model persistence 
-            save_itermediate_data=True, # save X_meta (i.e. save pre-computed probability matrix)
+            save_itermediate_data=save_itermediate_data, # save X_meta (i.e. save pre-computed probability matrix)
             data_dir=data_dir, 
             model_dir=model_dir, 
             work_dir=work_dir,

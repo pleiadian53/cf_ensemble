@@ -166,8 +166,13 @@ class ImplicitMF(object):
         if self.policy.startswith('ra'): # approximate probabilities (ratings)
             assert self.ratings is not None
             # print('(train_model) iter routine: {}'.format('estimate ratings'))
-            iter_routine = self.iteration_colored  # self.iteration_colored # self.iteration
-        elif self.policy.startswith('l'): # labels given (only used for ensemble learning)
+
+            if self.polarity is None: 
+                iter_routine = self.iteration # [options] self.iteration # self.iteration_colored  
+            else: 
+                iter_routine = self.iteration_colored
+                
+        elif self.policy.startswith('l'): # labels given 
             nL = len(self.labels)
             assert nL > 0
             assert nL == self.confidence.shape[1]
@@ -242,10 +247,12 @@ class ImplicitMF(object):
         else: 
             for i in range(self.num_iterations):
                 t0 = time.time()
-                if verbose and i % 10 == 0: print('(ALS) Solving for user vectors | iteration %d of %d ... ' % (i+1, self.num_iterations))
+                if verbose and i % 10 == 0: 
+                    print(f"(ALS) Solving for USER vectors via {iter_routine.__name__} | iteration {i+1} of {self.num_iterations} ...")
                 self.user_vectors = iter_routine(True, sparse.csr_matrix(self.item_vectors), it=i)  # it: iteration number, for debugging only
 
-                if verbose and i % 10 == 0: print('(ALS) Solving for item vectors | iteration %d of %d ... ' % (i+1, self.num_iterations))
+                if verbose and i % 10 == 0: 
+                    print(f"(ALS) Solving for ITEM vectors via {iter_routine.__name__} | iteration {i+1} of {self.num_iterations} ...")
                 self.item_vectors = iter_routine(False, sparse.csr_matrix(self.user_vectors), it=i)
 
                 t1 = time.time()
@@ -299,12 +306,12 @@ class ImplicitMF(object):
 
             if not fixed_u: # user vectors are to be updated while item_vectors are held fixed
                 if verbose and i % 10 == 0: 
-                    print('(LS) Solving for user vectors HOLDING item vectors FIXED | iteration %d of %d ... ' % (i+1, n_iter_plugin))
+                    print(f"(LS) Solving for USER vectors via {iter_routine.__name__} | iteration {i+1} of {n_iter_plugin} ...")
                 self.user_vectors = iter_routine(True, sparse.csr_matrix(self.item_vectors))   # fix item_vectors and solve for user_vectors
 
             if not fixed_i: # item vectors are to be updated while user_vectors are held fixed
                 if verbose and i % 10 == 0: 
-                    print('(LS) Solving for item vectors HOLDING user vectors FIXED | iteration %d of %d ... ' % (i+1, n_iter_plugin))
+                    print(f"(LS) Solving for ITEM vectors via {iter_routine.__name__} | iteration {i+1} of {n_iter_plugin} ...")
                     # print('     ... item_vector[0][:10]: {iv}'.format(iv=self.item_vectors[0][:10]))
                 self.item_vectors = iter_routine(False, sparse.csr_matrix(self.user_vectors))  # fix user_vectors and solve for item_vectors (useful for predicting new items in T)
 
@@ -361,7 +368,7 @@ class ImplicitMF(object):
             
             ## this is what xu dot yi tries to approximate
             # pu = counts_i.copy()  # if pu repr. preferences {0, 1}
-            # pu[np.where(pu != 0)] = 1.0
+            # pu[np.where(pu != 0)] = 1.0  # preferred if count > 0
 
             pu = ratings_i.copy() # treat pu as 'rating' 
             if add_bias: pu = pu - gamma if is_user else pu - beta 
@@ -415,15 +422,20 @@ class ImplicitMF(object):
         solve_vecs = np.zeros((num_solve, num_factors))
 
         t = time.time()
+        
+        ############################################
         ctp, ctn = self.codes['tp'], self.codes['tn']
+        cfp, cfn = self.codes['fp'], self.codes['fn']
+        ############################################
+
         for i in range(num_solve):
             if is_user:
-                counts_i = self.confidence[i].toarray()
-                # ... 2D: 1 by n array
+                counts_i = self.confidence[i].toarray() # shape: (1, N)
+                # ... 2D: (1, N)
                 ratings_i = self.ratings[i] # .toarray()
-                # ... 1D
+                # ... 1D: (N, )
                 polarity_i = self.polarity[i].toarray()  # assuming self.polarity is a sparse matrix
-                # ... 2D: dim(ratings_i): n_items
+                # ... 2D: (N, )
             else: # is_item 
                 counts_i = self.confidence[:, i].T.toarray()
                 ratings_i = self.ratings[:, i].T # .toarray()
@@ -433,18 +445,27 @@ class ImplicitMF(object):
             CuI = sparse.diags(counts_i, [0])  # per-user or per-item diagonal matrix
             
             ## this is what xu dot yi tries to approximate
-            # pu = counts_i.copy()  # if pu repr. preferences {0, 1}
+            # pu = counts_i.copy()  # if pu repr. preferences {0, 1} ... 
+            # pu[np.where(pu != 0)] = 1.0  # ... then preferred if count > 0
+
             pu = ratings_i.copy() # treat pu as 'rating'
             # ... 1D array (because ratings is a dense array, slicing operation leads to 1D array)
+            
             sign_u = polarity_i.copy()  # 2D: 1-by-n 
-            # ... 1 * ni  (2D array) // since polarity is a sparse matrix -> toarray() => sign_u becomes a 1 * ni  (2D array)
+            # ... 2D: (1, ni) // since polarity is a sparse matrix -> toarray() => sign_u becomes a 1 * ni  (2D array)
+            
             sign_u = sign_u.flatten() 
             # ... now sign_u is 1D // since pu is a 1D array (combing from slicing of dense array), sign_u has to be flattened to 1D as well
 
             # overwrites ratings
             # assert pu.shape == sign_u.shape, "dim(pu): {}, dim(sign_u): {}".format(pu.shape, sign_u.shape)
             pu[np.where(sign_u == ctp)] = self.pos_label  # TPs
-            pu[np.where(sign_u == ctn)] = self.neg_label  # po
+            pu[np.where(sign_u == ctn)] = self.neg_label  # TNs
+
+            # [test]
+            # assert np.all(counts_i.flatten()[np.where( (sign_u == cfn) | (sign_u == cfp) )] == 0), \
+            #           f"zero(counts_i): {np.sum(counts_i==0)}\n{counts_i}\n" # ... ok
+
             if add_bias: pu = pu - gamma if is_user else pu - beta 
             
             # Y'CuY => Y'Y + Y'(Cu-I)Y

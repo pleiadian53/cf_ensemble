@@ -5491,7 +5491,7 @@ def wmf_ensemble_iter2(data, params, hyperparams={}, indices=[], vars=['wmfCV', 
                             lambda_val=System.lambda_val,  # 0.8 by default
 
                             # label_confidence=Cx_bar, 
-                            polarity=Po,   # colored polarity matrix
+                            polarity=Po,   # color matrix
                             p_threshold=p_threshold,
                             positive_pref=positive_pref, 
                             negative_pref=negative_pref, 

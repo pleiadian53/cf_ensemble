@@ -763,7 +763,7 @@ def confidence2D(X, L, mode='brier', topk=(0, 0), scoring=None, greater_is_bette
 
     """
     def verify(Wu, Wi, n=10): 
-        print('(confidence2D) confidence weights (mode=%s)\n...Wu:\n%s\n' % (mode, Wu[:n]))
+        print('(confidence2D) confidence weights (mode=%s)\n... Wu:\n%s\n' % (mode, Wu[:n]))
         print('... Wi:\n%s\n' % Wi[:n])
         Wt = np.outer(Wu[:n], Wi[:n])
         print('... W:\n%s\n' % Wt)
@@ -779,6 +779,7 @@ def confidence2D(X, L, mode='brier', topk=(0, 0), scoring=None, greater_is_bette
 
     # policy_threshold = kargs.get('policy_threshold', '')  # set to '' to automatically determine the policy based on the value of L
     p_threshold = kargs.get('p_threshold', [])
+    verbose = kargs.get('verbose', 1)
     W = Wu = Wi = None
 
     ############################################################
@@ -788,10 +789,11 @@ def confidence2D(X, L, mode='brier', topk=(0, 0), scoring=None, greater_is_bette
         Wi = confidence_pointwise_ensemble_prediction(X, L, p_threshold=p_threshold, mode='item')
         
         # [test]
-        print("(confidence2D) item/data-wise confidence score distributions ... ")
-        test_items = np.random.choice(range(X.shape[1]), 5) 
-        for j in test_items: 
-            print('... data [{}] | {}'.format(j, Wi[:5]))
+        if verbose: 
+            print("(confidence2D) item/data-wise confidence score distributions ... ")
+            test_items = np.random.choice(range(X.shape[1]), 5) 
+            for j in test_items: 
+                print('... data [{}] | {}'.format(j, Wi[:5]))
     ############################################################
  
     if mode.startswith('b' ): # brier
@@ -843,7 +845,7 @@ def confidence2D(X, L, mode='brier', topk=(0, 0), scoring=None, greater_is_bette
         Wu = confidence(X, L, mode='user', topk=topk_users, scoring=scoring, greater_is_better=greater_is_better)
         Wi = confidence(X, L, mode='item', topk=topk_items, scoring=scoring, greater_is_better=greater_is_better)
     
-    if kargs.get('verify', True): 
+    if verbose: 
         if mode != 'rank': verify(Wu, Wi, n=10)
 
     ### return format 
@@ -851,7 +853,7 @@ def confidence2D(X, L, mode='brier', topk=(0, 0), scoring=None, greater_is_bette
         return W  # return W directly since rank scores do not compute Wu and Wi separately
 
     if Wi is None: 
-        print(f'(confidence2D) Wi undefined under mode: {mode} => Effectively only use Wu to compute Cui')
+        if verbose: print(f'(confidence2D) Wi undefined under mode: {mode} => Effectively only use Wu to compute Cui')
         Wi = np.ones(n_items)
 
     W = np.outer(Wu, Wi)  # n_users by n_items
@@ -2610,6 +2612,7 @@ def evalConfidenceMatrix(X, L=[], **kargs):
     Cui for all the other policies
 
     """
+    verbose = kargs.get('verbose', 1)
     policy = kargs.get('policy', 'item')   
     policy_opt = kargs.get('policy_opt', 'rating')
 
@@ -2622,7 +2625,6 @@ def evalConfidenceMatrix(X, L=[], **kargs):
     ###########################################################
     # confidence measure
     conf_measure = kargs.get('conf_measure', 'brier')
-    print('(evalConfidenceMatrix) conf_measure: %s' % conf_measure)
     
     # conf_user, conf_item = kargs.get('conf_user', True), kargs.get('conf_item', True)
     # if conf_measure.startswith('uni'):  # uniform, i.e. all equally good or equally bad
@@ -2683,22 +2685,23 @@ def evalConfidenceMatrix(X, L=[], **kargs):
               }
     params.update(shared_params)
 
-    div("(evalConfidenceMatrix) policy_filtering: {0}, policy_opt: {1} | conf_measure: {2} | policy_threshold: {3}, ratio_users: {4}, ratio_small_class: {5}, supervised? {6}, mask_all_test? {7} | alpha: {8}".format(policy, 
-                    policy_opt, 
-                    params['conf_measure'], params['policy_threshold'], 
-                    params['ratio_users'], params['ratio_small_class'], 
-                    params['supervised'], params['mask_all_test'], 
-                    params['alpha']), symbol='=', border=2)
-    if params['is_cascade']: 
-        print('... Filtering policy in training split: {} =?= test split: {}'.format(policy, params['policy_test']))
-    if params['policy_test'].startswith('po'):
-        div("(evalConfidenceMatrix) labeling_model: {} | constrained? {}, stochastic? {}, est sample type? {}".format(
-            params['labeling_model'], params['constrained'], params['stochastic'], params['estimate_sample_type']), symbol='#') 
+    if verbose: 
+        div("(evalConfidenceMatrix) policy_filtering: {0}, policy_opt: {1} | conf_measure: {2} | policy_threshold: {3}, ratio_users: {4}, ratio_small_class: {5}, supervised? {6}, mask_all_test? {7} | alpha: {8}".format(policy, 
+                        policy_opt, 
+                        params['conf_measure'], params['policy_threshold'], 
+                        params['ratio_users'], params['ratio_small_class'], 
+                        params['supervised'], params['mask_all_test'], 
+                        params['alpha']), symbol='=', border=2)
+        if params['is_cascade']: 
+            print('... Filtering policy in training split: {} =?= test split: {}'.format(policy, params['policy_test']))
+        if params['policy_test'].startswith('po'):
+            div("(evalConfidenceMatrix) labeling_model: {} | constrained? {}, stochastic? {}, est sample type? {}".format(
+                params['labeling_model'], params['constrained'], params['stochastic'], params['estimate_sample_type']), symbol='#') 
 
-    # algorithmic specifics
-    print("... Balance class | balance sample size distribution? {t_sample}, balance class conf scores? {t_conf}".format(
-        t_sample=params['balance_class'], t_conf=params['balance_and_scale']))
-    print("... Posthoc weight adjustments? | beta: {}, suppress_negative_examples: {}".format(params['beta'], params['suppress_negative_examples']))
+        # algorithmic specifics
+        print("... Balance class | balance sample size distribution? {t_sample}, balance class conf scores? {t_conf}".format(
+            t_sample=params['balance_class'], t_conf=params['balance_and_scale']))
+        print("... Posthoc weight adjustments? | beta: {}, suppress_negative_examples: {}".format(params['beta'], params['suppress_negative_examples']))
     
     #############################################
     # ... message passing from training split (R), only applicable when X references a test split (T)
@@ -2706,7 +2709,7 @@ def evalConfidenceMatrix(X, L=[], **kargs):
     if M is not None: 
         assert isinstance(M, tuple) and len(M) >= 2
         # R, L = M
-        print('... Passing messages from R to T | X <- T, X_train <- R | Use sample statistics from R to estimate labels in T ... (verify) #')
+        if verbose: print('... Passing messages from R to T | X <- T, X_train <- R | Use sample statistics from R to estimate labels in T ... (verify) #')
 
     # if isinstance(X, tuple): 
     #     assert len(X) == 2
@@ -2765,7 +2768,9 @@ def evalConfidenceMatrix(X, L=[], **kargs):
                         U=kargs.get('U', []),
                         L_true=kargs.get('L_test', []),  # test the accuracy of the unsupervised estimte of labeling 
                         fold=fold, 
-                        path=kargs.get('path', os.getcwd())   )  
+                        path=kargs.get('path', os.getcwd()), 
+                        verbose=verbose 
+                        )  
     Cui, Po, p_th, *rest = ret
 
     return (Cui, Po, p_th)
@@ -3790,6 +3795,11 @@ def mask_over_dual(C, X, L, ratio_users=0.5,
     #     return sparse.csr_matrix(C), sparse.csr_matrix(C_prime)     
     return C, C_prime
 
+def shift(C, offset=-1.0):
+    if sparse.issparse(C): 
+        C = C.todense() + offset
+        return sparse.csr_matrix(C)
+    return C + offset
 
 def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, gamma=0.5,
         suppress_max_class=False, 
@@ -3818,6 +3828,10 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
     alpha: the multiplying factor for confidence matrix 
     beta: the magnifiying factor for TP
     gamma: the discounting factor for suppressing confidence weights in the test split
+
+    Po: polarity matrix, where {TP, TN} = 1 and {FP, FN} = 0 OR
+        color matrix,    where TP=2, TN=1, FP=-2, FN=-1
+
 
     """
     import scipy.sparse as sparse
@@ -4571,7 +4585,7 @@ def toConfidenceMatrix(X, L, **kargs):
                     # following params are used only when mode = 'ratio'
                     p_threshold=p_threshold,  
                     policy_threshold=kargs.get('policy_threshold', ''), 
-                    ratio_small_class=kargs.get('ratio_small_class', 0.01))  # don't return outer(wu, Wi) 
+                    ratio_small_class=kargs.get('ratio_small_class', 0.01), verbose=verbose)  # don't return outer(wu, Wi) 
     ################################################################# 
     # ... C0: raw confidence scores 
     Cui = np.zeros(C0.shape)+C0
@@ -4582,8 +4596,8 @@ def toConfidenceMatrix(X, L, **kargs):
     tConservative = True
     isPolarityMatrix = True
 
-    # Pc, Lh = color_matrix(X, L, p_threshold) # TP=2, TN=1, FP=-2, FN=-1, used for polarity model
-    Pc, Lh = polarity_matrix(X, L, p_threshold) # {TP, TN}: 1, {FP, FN}: -1
+    Pc, Lh = color_matrix(X, L, p_threshold) # TP=2, TN=1, FP=-2, FN=-1, used for polarity model
+    # Pc, Lh = polarity_matrix(X, L, p_threshold) # {TP, TN}: 1, {FP, FN}: -1
 
     #################################################################
     # Condition: either polarity matrix (Po) or color matrix (Pc) is determined
@@ -9862,7 +9876,7 @@ def polarity_modeling(R, Lr, p_th, T, Lt=None, C=None, U=None, policy='sequence'
     # sys.exit(0)
     return M, M_bar
 
-def make_cn(C, Po, is_unweighted=False, weight_neutral=0.0, weight_negative=0.0, sparsify=True):
+def make_cn(C, Po, is_unweighted=False, weight_neutral=0.0, weight_negative=-1.0, sparsify=True, verbose=1):
     """
     Given polarity matrix (Po), mask the neutral and negative entries in the confidence matrix so that 
     they do not enter the optimization objective (i.e. latent factors will not be made to approximate 
@@ -9875,7 +9889,7 @@ def make_cn(C, Po, is_unweighted=False, weight_neutral=0.0, weight_negative=0.0,
     import scipy.sparse as sparse
 
     if not is_unweighted: 
-        print("(make_cn) Using UNWEIGHTED Cw, non-weighted MF to approximate ratings ...")
+        if verbose: print("(make_cn) Using UNWEIGHTED Cw, non-weighted MF to approximate ratings ...")
         Cn = np.ones(C.shape) 
 
         if sparse.issparse(Po): 
@@ -9887,7 +9901,7 @@ def make_cn(C, Po, is_unweighted=False, weight_neutral=0.0, weight_negative=0.0,
             Cn[Po == 0] = weight_neutral    # marking neutral
             Cn[Po < 0]  = weight_negative   # marking negative
     else: 
-        print("(make_cn) Using WEIGHTED Cw, weighted MF to approximate ratings ...")
+        if verbose: print("(make_cn) Using WEIGHTED Cw, weighted MF to approximate ratings ...")
         # otherwise, we retain the weight but masking the neutral and negative examples so that they do not enter the cost function when approximating "ratings"
         
         # ... If Cx is sparse, then Cn+Cx is no longer sparse but of matrix type (if without .toarray())
@@ -11168,6 +11182,14 @@ def polarity_matrix(X, L, p_th, reduced_negative=-1, pos_label=1, neg_label=0):
     Mc, Lh = probability_filter(X, L, p_th)
     return to_polarity(Mc), Lh
 
+def is_color_matrix(Pc):
+    codes = np.unique(Pc) 
+    tval = True
+    for code in codes:
+        if not code in Polarity.codes: 
+            tval = False
+            break 
+    return tval
 def color_matrix(X, L, p_th, reduced_negative=False, pos_label=1, neg_label=0): 
     """
 
