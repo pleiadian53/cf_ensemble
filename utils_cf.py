@@ -5717,7 +5717,8 @@ def interpolate(X1, X2, W1, W2=None):
     ---
     X1: old rating matrix 
     x2: new rating matrix
-    W1: preference matrix
+    W1: probability filter (aka preference matrix)
+
         if pref[i,j] == 1, then use X1[i, j]
         if pref[i,j] == 0, then use X2[i, j]; effectively replacing X1[i,j] by X2[i, j]
 
@@ -5731,8 +5732,9 @@ def interpolate(X1, X2, W1, W2=None):
     import scipy.sparse as sparse
     assert X1.shape == X2.shape == W1.shape
 
-    # if not isinstance(W1, np.ndarray): W1 = W1.toarray()  # W1 has to be in dense form
-    if sparse.issparse(W1): W1 = W1.toarray()
+    # if not isinstance(W1, np.ndarray): W1 = W1.toarray( )  # W1 has to be in dense form
+    if sparse.issparse(W1):  
+        W1 = W1.toarray()
 
     W1 = W1.astype(float)
     vmin, vmax = np.min(W1), np.max(W1)

@@ -171,7 +171,7 @@ class ImplicitMF(object):
                 iter_routine = self.iteration # [options] self.iteration # self.iteration_colored  
             else: 
                 iter_routine = self.iteration_colored
-                
+
         elif self.policy.startswith('l'): # labels given 
             nL = len(self.labels)
             assert nL > 0
@@ -1116,8 +1116,9 @@ def canonicalize_prob(A, name='', verbose=True, epsilon=1e-9):
         n_underflow = np.sum(A < 0.0)
         if n_overflow > 0: 
             print('... %d entries with p > 1.0!' % n_overflow)
+        if n_underflow > 0: 
             print('... %d entries with p < 0.0!' % n_underflow)
-            print('...... %d illegal probabilities' % n_overflow + n_underflow)
+        print(f'...... Number of illegal probabilities: {n_overflow + n_underflow}')
     return A
 
 def t_confidence_weights(test_=True): 

@@ -40,7 +40,10 @@ from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 from sklearn.utils.multiclass import unique_labels
 from sklearn.metrics import euclidean_distances
 
-from sklearn.externals.joblib import Parallel, delayed
+import joblib
+from joblib import Parallel, delayed
+# from sklearn.externals.joblib import Parallel, delayed # [deprecated]
+
 from sklearn.linear_model import SGDClassifier
 
 from nnls import NNLS
@@ -2710,18 +2713,19 @@ def reconstruct_by_preference(C, X, prefs, factors=[], labels=[],
     return Xh, Xp, pref_threshold
 
 def reconstruct(C, X, P, Q, 
-        Mc=None, L=[], p_threshold=[],
+        Pc=None, L=[], p_threshold=[],
             use_confidence_weights=False,
             policy_opt='rating', policy_replace='rating', 
-            is_cascade=False,
-            replace_subset=True, replace_all=False, params={}, null_marker=0, name='X', verify=False, **kargs):
+            is_cascade=True,
+            replace_subset=True, replace_all=False, params={}, null_marker=0, name='X', **kargs):
     """
     Use the latent factors P and Q to reconstruct X which using C as a mask. 
     If policy_opt is set to 'preference', then the mask is computed via the input latent factors (P, Q) (instead of using C). 
 
-    Params
-    ------
-    M: should be provided when (P, Q) is used to compute 'preference' (good proba vs bad proba)
+    Parameters
+    ----------
+    Pc: Color matrix encoding TP, TN, FP, FN (and neutral) for X
+        Note that `Pc` should be provided when (P, Q) is used to compute 'preference' (reliable proba vs unreliable proba)
     params: parameters passed down from the caller (e.g. n_iter, n_factors)
 
     """
@@ -2729,6 +2733,7 @@ def reconstruct(C, X, P, Q,
     import utils_cf as uc
     import scipy
 
+    verbose = kargs.get('verbose', 1)
     ##############################################
     replace_all = not replace_subset
     ##############################################
@@ -2751,7 +2756,7 @@ def reconstruct(C, X, P, Q,
 
         # assert len(np.unique(Xh)) == 2, "Xh should a binary matrix but got values: {}".format(np.unique(Xh))
         # Rh, Th represent preference scores, not probabilities
-        div("(reconstruct) Reconstructed matrix holds preference scores (binarized? {}, threshold given? {}) | is T? {}".format(binarize, pref_th < 0, is_test_set), symbol='#')
+        if verbose: div("(reconstruct) Reconstructed matrix holds preference scores (binarized? {}, threshold given? {}) | is T? {}".format(binarize, pref_th < 0, is_test_set), symbol='#')
         
         #@ 2. (Rh, Th) as ratings (using preference scores to select & mask entries)
         # if replace_subset:   # if not in prediction mode, then we are in the mode of replacing bad rating values
@@ -2792,44 +2797,50 @@ def reconstruct(C, X, P, Q,
         #   if 'replace_subset': True, then we only replace 'bad entries' in the original rating matrix by the new approximation given by the latent factors
         if replace_all: # params['predict_probs']: 
             Xh = ua.predict_by_factors(P, Q, canonicalize=True)
-            div("(reconstruct) reconstructing the entire proba table ...", symbol='#')
+            if verbose: div("(reconstruct) reconstructing the entire proba table ...", symbol='#')
         else: # reconstructing only (replace 'bad probabilities')
             # assert params['replace_subset'] == True 
             # case 1: Cui ~ R => Th: None, reconstructed R only
             # case 2: Cui ~ np.hstack((R, T)) => reconstructed (R, T)
-            div("(reconstruct) weighted averaing between X/original and Xh/new, where Xh = dot(P, Q) | use confidence matrix (C) as weights? {}".format(use_confidence_weights), symbol='#')
+            if verbose: div("(reconstruct) weighted averaing between X/original and Xh/new, where Xh = dot(P, Q) | use confidence matrix (C) as weights? {}".format(use_confidence_weights), symbol='#')
             W = None
-            if use_confidence_weights: 
+            if use_confidence_weights: # Use confidence scores as weights 
                 if scipy.sparse.issparse(C): C = C.toarray()
                 W = uc.softmax(C, axis=0)
             else: 
-                W = Mc  # Mc is a color matrix
+                W = Pc  # Pc is a color matrix
+                if scipy.sparse.issparse(W): W = W.A 
+                # Note: Why converting to dense? Subtracting a sparse matrix from a nonzero scalar is not supported 
+                #       E.g. can't do 1.0-W if W is sparse
+
                 if W is None: 
                     W, _ = uc.probability_filter(X, L, p_threshold)
                 else: 
-                    print('(reconstruct) Converting colored polarity matrix to preference matrix ...')
-                    W = uc.to_preference(Mc)
-                wmin, wmax = np.min(W), np.max(W)
-                assert wmin == 0 and wmax == 1, "W is not a preference matrix | values: [{}, {}]".format(wmin, wmax)
+                    if verbose > 1: 
+                        print('(reconstruct) Converting color matrix to a standard probability filter (aka preference matrix) ...')
+                    W = uc.to_preference(W) 
+
+            wmin, wmax = np.min(W), np.max(W)
+            assert wmin >= 0 and wmax <= 1, "W is not a probability filter | values: [{}, {}]".format(wmin, wmax)
 
             # W as a weight matrix: the higher the W[i,j], the more weight on X[i,j]
-            # W as a preference matrix: W[i,j] = 1 => use X[i,j]/original, if W[i,j] = 0, use Xh[i,j]/reconstructed
+            # W as a preference matrix: W[i,j] = 1 => use X[i,j] (original value), if W[i,j] = 0, use Xh[i,j] (re-est value)
             # Xh = uc.replace(P, Q, X=(W, X), canonicalize=True, 
             #         fill=null_marker, predict_func=ua.predict_by_factors, name=name)
-            Xs = ua.predict_by_factors(P, Q, canonicalize=True)
-            Xh = uc.interpolate(X, Xs, W, 1.0-W)
 
-        # [test]
-        Pc = Mc  # Mc is a preference matrix  # Po
+            Xs = ua.predict_by_factors(P, Q, canonicalize=True)
+            Xh = uc.interpolate(X, Xs, W, 1.0-W) # replace X by Xs selectively according to W (and 1-W)
+
+        # [test] 
         test_labels = kargs.get('test_labels', [])
         index = kargs.get('index', -1)  # outer CV index
-        if is_cascade and len(L) > 0:
+        if verbose and (is_cascade and len(L) > 0):
 
-            # if scipy.sparse.issparse(Mc): 
-            #     Po = np.copy( Mc.toarray() )
+            # if scipy.sparse.issparse(Pc): 
+            #     Po = np.copy( Pc.toarray() )
             # else: 
-            #     Po = np.copy( Mc )
-            # Po[Po < 0] = 0  # these entries are to be replaced by new estimates: P'Q
+            #     Po = np.copy( Pc )
+            # Pc[Pc < 0] = 0  # these entries are to be replaced by new estimates: P'Q
 
             msg = ''
             assert n_train > 0
@@ -5513,7 +5524,7 @@ def wmf_ensemble_iter2(data, params, hyperparams={}, indices=[], vars=['wmfCV', 
     # compute reconstructed training data (so that later on we can test its utility for stacking)
     # Pr, Qr => Rh, use Rh in place of R whenever Cr == fill
     Xh = reconstruct(Cn, X, P, Q, 
-                Mc=Po, 
+                Pc=Po, 
                 L=L, 
                 test_labels=np.hstack([L_train, L_test]), # test performance only
                     p_threshold=p_threshold,   

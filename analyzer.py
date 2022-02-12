@@ -17,6 +17,7 @@ from tabulate import tabulate
 
 import scipy
 from scipy.stats import kde
+import scipy.sparse as sparse
 
 from sklearn.neighbors import KernelDensity
 from scipy.stats import gaussian_kde
@@ -538,6 +539,73 @@ def fit_beta(x, name='TP', output_path=None, dpi=300, verbose=True, ext='pdf',
         plt.show()
  
     return (a, b, loc, scale)
+
+#############################################################################################
+def is_binary(X):
+    M = X
+    if sparse.issparse(var): M = X.A
+    return True if len(np.unique(M)) == 2 else False
+
+def is_multivalued(X, max_n=10):
+    """
+    Check if a matrix is multi-valued (e.g. color matrix), containing at least 2 unique 
+    elements but less than or equal to a maximum number `max_n` of unqiue values (why? 
+    because more than this quantity, the matrix is likely an artibrary numeric-valued matrix)
+    """ 
+    M = X
+    if sparse.issparse(var): M = X.A
+    n = len(np.unique(M))
+    return True if (n >= 2 and n <= max_n) else False
+
+def is_sparse(X): 
+    return True if sparse.issparse(X) else False
+
+def analyze_matrix_type(*M, **K):
+    # import scipy.sparse as sparse
+
+    mats = {}
+    if len(M) > 0: 
+        for i in range(len(M)): 
+            mats[i] = M[i]
+    if len(K) > 0:
+        for k, v in K.items(): 
+            mats[k] = v 
+
+    for varname, var in mats.items(): 
+        msg = ''
+        mtype = 'dense'
+
+        mat = var
+        if sparse.issparse(var): 
+            mtype = 'sparse'
+            mat = var.A # most matrices in our use cases are probably not very sparse
+
+        msg += f"[info] Matrix {varname}: shape={mat.shape}, mtype={mtype}, dtype={type(var)} \n" 
+
+        N = mat.size # np.prod(M.shape)
+        n_zeros = np.sum(mat == 0.0) 
+        msg += f"...    Number of zeros: {n_zeros}, ratio: {n_zeros/(N+0.0)}\n"
+        
+        # Simple statistics on non-zero elements
+        m_nonzeros = np.mean(mat[mat != 0.0])
+        med_nonzeros = np.median(np.mean(mat[mat != 0.0]))
+        msg += f"...    Mean(non-zeros)={m_nonzeros}, median(non-zeros)={med_nonzeros}\n"
+
+        # Is it a binary matrix? e.g. polarity matrix, probability filter (or preference matrix)
+        unique_elements = np.unique(mat)
+        nE = len(unique_elements)
+        msg += f"...    `{varname}` is a binary matrix? {True if nE==2 else False}\n"
+        msg += f"...    Number of unique elements: {nE}\n"
+
+        if len(unique_elements) <= 10: 
+            msg += f"...    Elements:\n{unique_elements}\n"
+
+        print(msg); print('-' * 50)
+
+    return 
+
+
+#############################################################################################
 
 # Create data: 200 points
 def plot_relation(**kargs): 

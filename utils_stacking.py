@@ -603,6 +603,9 @@ class CFStacker(ClassifierMixin, _BaseCF):
             if os.path.exists(f): 
                 metas[dtype] = dict(np.load(f)) 
         return metas 
+    def load_meta(self, fold_number=None): # [alias]
+        return self.cf_fetch(self, fold_number) 
+
     def cf_write(self, dtype='test', **kargs):
         """
         Write meta data into the CF dataset as specified by `dtype` {'training', 'dev', 'test'}
@@ -627,7 +630,12 @@ class CFStacker(ClassifierMixin, _BaseCF):
         else: 
             dtype = 'test'
 
-        fpath = os.path.join(self.data_dir, f'{dtype}-{self.fold_number}.npz')
+        # Overwrite instance parameters such as `fold_number` 
+        # ... not recoomended; only useful in testing when you don't want multiple instances of CFSTacker
+        fold_number = kargs.pop('fold_number', self.fold_number)
+        #######################################################
+
+        fpath = os.path.join(self.data_dir, f'{dtype}-{fold_number}.npz')
         data_set = dict(np.load(fpath))
         
         for k, v in kargs.items():
@@ -642,6 +650,8 @@ class CFStacker(ClassifierMixin, _BaseCF):
         with open(fpath, 'wb') as f: 
             if self.verbose: print(f"(cf_write) Saving X_meta at:\n{fpath}\n")
             np.savez(f, **data_set) # `y` (label) is unknown
+    def write_meta(self, dtype='test', **kargs): # [alias]
+        return self.cf_write(self, dtype, **kargs)
 
     def cf_predict(self, X=None, **kargs): # [todo]
         # if len(data) == 2: # predict new/test data
@@ -1280,6 +1290,95 @@ class StackingRegressor(RegressorMixin, _BaseStacking):
         else:
             final_estimator = self.final_estimator
         return super()._sk_visual_block_(final_estimator)
+
+###########################################################
+
+# Simple (level-1) pre-trained model loader bypassing training loop
+def get_pretrained_model(input_dir, base_learners, fold_number=0, **kargs):
+    import utils_cf as uc 
+    
+    verbose = kargs.get('verbose', 1)
+    final_estimator = kargs.get('final_estimator', LogisticRegression())
+    
+    clf = CFStacker(estimators=base_learners, 
+                        final_estimator=final_estimator, 
+                        work_dir = input_dir,
+                        fold_number = fold_number, # use this to index traing and test data 
+                        verbose=verbose) 
+    meta_set = clf.cf_fetch()
+    X_train, y_train = meta_set['train']['X'], meta_set['train']['y'] 
+    X_test = meta_set['test']['X']
+    y_test = None
+    try: 
+        y_test = meta_set['test']['y']
+    except: 
+        print("(get_pretrained_model) Warning: Test label (y_test) is not available.")
+    R = X_train.T # transpose because we need users by items (or classifiers x data) for CF
+    T = X_test.T
+    U = meta_set['train']['U']
+    L_train = y_train
+    p_threshold = uc.estimateProbThresholds(R, L=L_train, pos_label=1, policy='fmax')
+    lh = uc.estimateLabels(T, p_th=p_threshold) # We cannot use L_test (cheating), but we have to guesstimate
+    L = np.hstack((L_train, lh)) # true labels (for R) concatenated with estimated labels (for T)
+    X = np.hstack((R, T))
+    n_train = R.shape[1]
+    return (X, L, U, p_threshold, n_train)
+
+def get_pretrained_model_with_confidence_matrix(input_dir, base_learners, fold_number=0, **kargs): 
+    import utils_cf as uc
+
+    ret = {}
+    X, L, U, p_threshold, n_train = get_pretrained_model(input_dir, base_learners, fold_number=0, **kargs)
+    ret['X'] = X 
+    ret['L'] = L 
+    ret['U'] = U
+    ret['p_threshold'] = p_threshold
+    ret['n_train'] = n_train
+   
+    # Key parameters
+    policy_threshold= kargs.get('policy_threshold', 'fmax')
+    conf_measure = kargs.get('conf_measure', 'brier')
+    alpha = kargs.get('alpha', 100.0)
+    beta = kargs.get('beta', 1.0)
+
+    CX = uc.evalConfidenceMatrix(X, L=L, U=U, 
+                             p_threshold=p_threshold, # not needed if L is given (suggested use: estimate L outside of this call)
+                             policy_threshold=policy_threshold,
+                             conf_measure=conf_measure, 
+                             fill=0, is_cascade=True, n_train=n_train, 
+                             fold=fold_number, 
+                             verbose=0) 
+    C0, Pc, p_threshold2, *CX_res = CX
+
+    Cn = uc.mask_neutral_and_negative(C0, Pc, is_unweighted=False, weight_negative=0.0, sparsify=True)
+    Cn = uc.balance_and_scale(Cn, X=X, L=L, Po=Pc, p_threshold=p_threshold, U=U, 
+                        alpha=alpha, beta=beta, 
+                            conf_measure=conf_measure, 
+                                    n_train=n_train, fold=fold_number, verbose=0)
+    assert np.allclose(p_threshold2, p_threshold)
+
+    ret['C0'] = ret['confidence_matrix'] = C0
+    ret['Pc'] = ret['color_matrix'] = Pc 
+    ret['Cn'] = Cn  # masked confidence matrix where FP, FN (negative) and entries with high uncertainty (neutral) are set to 0s
+
+    return ret
+
+def verify_shape(X, R, T, L, U, p_threshold):
+    if X.shape[1] != R.shape[1]+T.shape[1]: 
+        raise ValueError(f"Total sample size: {X.shape[1]} != {R.shape[1]+T.shape[1]} = n(train):{R.shape[1]} + n(test):{T.shape[1]}")
+
+    # if n_train != R.shape[1]: 
+    #     raise ValueError(f"Size of training set {R.shape[1]} != n_train: {n_train}")
+
+    if len(L) != X.shape[1]: 
+        raise ValueError(f"Size of labels {len(L)} != sample size: {X.shape[1]} > Forgot to include estimated labels for T?")
+
+    if len(U) != X.shape[0]: 
+        raise ValueError(f"Inconsistent n(users/classifiers): {len(U)} != X.shape[0]: {X.shape[0]}")
+
+    if len(p_threshold) != X.shape[0]:
+        raise ValueError(f"Inconsitent n(users/classifiers): {X.shape[0]} != n(thresholds): {len(p_threshold)}") 
+    return
 
 
 # get the dataset
