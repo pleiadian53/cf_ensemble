@@ -1447,6 +1447,7 @@ def save_data(D, L, fold, method, **kargs):
 
     return 
 
+# [data_pipeline] future: factor this function to data_pipeline module
 def to_rating_matrix(fold, **kargs):
     """
 

@@ -51,6 +51,7 @@ class System(object):
     def config(project_path):   
         System.domain = os.path.basename(project_path)
 
+
 def getProjectPath(domain='recommender/ml-100k', dataset='', verify_=False): 
     """
 

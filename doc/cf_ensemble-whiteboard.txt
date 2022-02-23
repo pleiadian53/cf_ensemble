@@ -1,4 +1,9 @@
 
+
+
+
+
+
 I just uploaded the new CF ensemble code to github. 
 
 Below are the notebooks that demonstrate how stacking works using scikit-learn's modules. 
@@ -26,10 +31,25 @@ utils_cf.py # <<< most updates are here
 cluster.py 
 evaluate.py
 
-
+Sequences of DNA with promoter and terminator signals for transcription.
 
 ### Todo ### 
-- replace plotly.plotly (deprecated)
+
+# Why is Rh worse than Th? See the log at analyze_reconstruction() ... 
+> (reconstruct) Quality of Rh | fmax(Rbase):
+
+
+
+
+
+# 
+df_to_rating_matrix()
+
+# legacy code: vary hard to work with
+
+mfb_ensemble() -> evalTestSet
+
+
 
 # balance classe weights 
 TP TN FP FN 
