@@ -35,10 +35,19 @@ Sequences of DNA with promoter and terminator signals for transcription.
 
 ### Todo ### 
 
+
+# cf2.py, data_pipeline.py 
+- reestimate 
+
+> using user, item embeddings to re-estimate T does not lead to a good result
+[info] How different is Th from T? Frobenius norm: 19.731104761379804
+[info] How different are lh0 and lh? 0.0464
+[result] F1 score with the original T:  0.42152466367713004
+[result] F1 score with re-estimated Th: 0.0
+
+
 # Why is Rh worse than Th? See the log at analyze_reconstruction() ... 
 > (reconstruct) Quality of Rh | fmax(Rbase):
-
-
 
 
 

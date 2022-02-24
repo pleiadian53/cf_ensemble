@@ -61,8 +61,125 @@ def rating_matrix_to_decoded_dataframe(X, U=None, items=None, **kargs):
 
     return df
 
-def training_data_to_rating_matrix(X, y, **kargs):
-    pass
+def reestimate(model, X, n_train, **kargs):
+    """
+    Use the (TF-trained) model to reconstruct the probaility rating matrix. 
+
+    If `n_train` is not None, re-estiamte the whole matrix X with new probabilities
+    using the learned latent factors given by `model` 
+
+    If, however, `n_train` is a number, then re-estimate only the test split of X 
+    i.e. X[n_train: ] (typically denoted by `T`). 
+    """
+    kargs['shuffle'] = False
+    kargs['normalize'] = False
+
+    # Convert the rating matrix into (X, y)-format that the model accepts
+    R, T = X[:,:n_train], X[:,n_train:]
+    X_train, X_test, y_train, y_test = rating_matrix_to_train_test_split(X, n_train, **kargs)
+
+    ####################################
+    y_train_pred = model.predict(X_train)
+    y_test_pred = model.predict(X_test)
+    ####################################
+
+    # Put the prediction back into the rating-matrix format
+    col_user = kargs.get('col_user', 'user')
+    col_item = kargs.get('col_item', 'item')
+    col_value = kargs.get('col_value', 'rating')
+    
+    df_train = DataFrame(X_train, columns=[col_user, col_item])
+    df_train[col_value] = y_train_pred
+    Rh = df_train.pivot(col_user, col_item, col_value).values
+    assert Rh.shape == R.shape
+
+    df_test = DataFrame(X_test, columns=[col_user, col_item])
+    df_test[col_value] = y_test_pred
+    Th = df_test.pivot(col_user, col_item, col_value).values
+    assert Th.shape == T.shape
+
+    return (Rh, Th)
+# [alias]
+def reconstruct(model, X, n_train, **kargs): 
+    return reestimate(model, X, n_train, **kargs)
+
+def reestimate_unreliable_only(model, X, n_train, C, Pc=None, **kargs):
+    L = kargs.pop('L', [])
+    p_threshold = kargs.pop('p_threshold', [])
+    use_confidence_weights = kargs.pop('use_confidence_weights', False) 
+    verbose = kargs.pop('verbose', 0)
+
+    Rh, Th = reestimate(model, X, n_train, **kargs)
+    Xh = np.hstack((Rh, Th))
+    XXh = interpolate(X, Xh, C, Pc, L, p_threshold, use_confidence_weights, verbose=verbose)
+
+    return (XXh[:,:n_train], XXh[:,n_train:])
+
+def interpolate(X, Xh, C, Pc, L=[], p_threshold=[], use_confidence_weights=False, verbose=0): 
+    from analyzer import is_sparse
+    import utils_cf as uc
+
+    W = Pc
+    if use_confidence_weights: # Use confidence scores as weights 
+        if issparse(C): C = C.toarray()
+        W = uc.softmax(C, axis=0)
+    else: 
+        if issparse(W): W = W.A 
+        # Note: Why converting to dense? Subtracting a sparse matrix from a nonzero scalar is not supported 
+        #       E.g. can't do 1.0-W if W is sparse
+
+        if W is None: 
+            W, _ = uc.probability_filter(X, L, p_threshold)
+        else: 
+            if verbose > 1: 
+                print('(reconstruct) Converting color matrix to a standard probability filter (aka preference matrix) ...')
+            W = uc.to_preference(W) 
+
+    wmin, wmax = np.min(W), np.max(W)
+    assert wmin >= 0 and wmax <= 1, "W is not a probability filter | values: [{}, {}]".format(wmin, wmax)
+
+    # Note: 
+    # W as a weight matrix: the higher the W[i,j], the more weight on X[i,j]
+    # W as a preference matrix: W[i,j] = 1 => use X[i,j] (original value), if W[i,j] = 0, use Xh[i,j] (re-est value)
+
+    # Xh = uc.replace(P, Q, X=(W, X), canonicalize=True, 
+    #         fill=null_marker, predict_func=ua.predict_by_factors, name=name)
+
+    Xh_partial = uc.interpolate(X, Xh, W, 1.0-W) # replace X by Xs selectively according to W (and 1-W)
+
+    return Xh_partial
+
+def rating_matrix_to_train_test_split(X, n_train, **kargs):
+    assert X.shape[1] >= n_train, f"Error: Sample size {X.shape[1]} while n_train={n_train}"
+
+    col_user = kargs.get('col_user', 'user')
+    col_item = kargs.get('col_item', 'item')
+    col_value = kargs.get('col_value', 'rating')
+
+    df = rating_matrix_to_dataframe(X, **kargs)
+    min_rating = min(df[col_value])
+    max_rating = max(df[col_value])
+
+    # min and max ratings will be used to normalize the ratings later (not necessary for probability scores)
+    normalize = kargs.get('normalize', False)
+    if normalize: 
+        y = df[col_value].apply(lambda x: (x - min_rating) / (max_rating - min_rating)).values
+    else: 
+        y = df[col_value].values
+
+    # Train-test spilt 
+    df_train = df.loc[df[col_item] < n_train]
+    X_train = df_train[[col_user, col_item]] # `X_train` in user-item-index pair format 
+    y_train = y[:n_train] # ratings in the training split
+
+    df_test = df.loc[df[col_item] >= n_train] 
+    X_test = df_test[[col_user, col_item]] # `X_test` in user-item-index pair format
+    y_test = y[n_train:]
+
+    assert X_train.shape[0] + X_test.shape[0] == X.size, \
+            f"shape(X_train): {X_train.shape} and shape(X_test): {X_test.shape} not consistent with shape(X): {X.shape}"
+
+    return (X_train, X_test, y_train, y_test)
 
 def rating_matrix_to_training_data(X, **kargs): 
     """
@@ -123,6 +240,14 @@ def rating_matrix_to_dataframe(X, **kargs):
         df = df.sample(frac=1, random_state=random_state)
 
     return df
+
+def dataframe_to_rating_matrix(df, **kargs):
+
+    col_user = kargs.get('col_user', 'user')
+    col_item = kargs.get('col_item', 'item')
+    col_value = kargs.get('col_value', 'rating')
+
+    return
 
 def demo_to_rating_matrix(): 
     # Download the actual data from http://files.grouplens.org/datasets/movielens/ml-latest-small.zip"

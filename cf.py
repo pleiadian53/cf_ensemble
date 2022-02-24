@@ -2316,12 +2316,11 @@ def reconstruct(C, X, P, Q,
             # case 1: Cui ~ R => Th: None, reconstructed R only
             # case 2: Cui ~ np.hstack((R, T)) => reconstructed (R, T)
             if verbose: div("(reconstruct) weighted averaing between X/original and Xh/new, where Xh = dot(P, Q) | use confidence matrix (C) as weights? {}".format(use_confidence_weights), symbol='#')
-            W = None
+            W = Pc # Pc is a color matrix
             if use_confidence_weights: # Use confidence scores as weights 
                 if scipy.sparse.issparse(C): C = C.toarray()
                 W = uc.softmax(C, axis=0)
             else: 
-                W = Pc  # Pc is a color matrix
                 if scipy.sparse.issparse(W): W = W.A 
                 # Note: Why converting to dense? Subtracting a sparse matrix from a nonzero scalar is not supported 
                 #       E.g. can't do 1.0-W if W is sparse
@@ -2336,8 +2335,10 @@ def reconstruct(C, X, P, Q,
             wmin, wmax = np.min(W), np.max(W)
             assert wmin >= 0 and wmax <= 1, "W is not a probability filter | values: [{}, {}]".format(wmin, wmax)
 
+            # Note: 
             # W as a weight matrix: the higher the W[i,j], the more weight on X[i,j]
             # W as a preference matrix: W[i,j] = 1 => use X[i,j] (original value), if W[i,j] = 0, use Xh[i,j] (re-est value)
+            
             # Xh = uc.replace(P, Q, X=(W, X), canonicalize=True, 
             #         fill=null_marker, predict_func=ua.predict_by_factors, name=name)
 
