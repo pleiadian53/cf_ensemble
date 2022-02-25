@@ -19,6 +19,7 @@ In particular, please look for the class definition `CFStacker` in `utils_stacki
 see how it works. It's intended to work just like the regular stacker class `StackingClassifier`
 available in scikit-learn. 
 
+
 Below are new files added to the code base in addition to the Jupyter notebooks:
 
 utils_stacking.py 
@@ -39,11 +40,36 @@ Sequences of DNA with promoter and terminator signals for transcription.
 # cf2.py, data_pipeline.py 
 - reestimate 
 
-> using user, item embeddings to re-estimate T does not lead to a good result
-[info] How different is Th from T? Frobenius norm: 19.731104761379804
-[info] How different are lh0 and lh? 0.0464
-[result] F1 score with the original T:  0.42152466367713004
-[result] F1 score with re-estimated Th: 0.0
+
+
+
+> the use of sample_weights seems to be helpful (bias: 0.97)
+  : use dp.matrix_to_augmented_training_data(X, C0, P)
+  >> delta(T, Th) becomes larger 
+  
+ 
+ [info] From R to Rh, delta(Frobenius norm)= 37.145144646099126
+[info] From T to Th, delta(Frobenius norm)= 19.018623044095637
+[info] How different are lh and lh_new? 0.0544
+[result] F1 score with the original T:  0.24657534246575344
+[result] F1 score with re-estimated Th: 0.29464285714285715
+
+> if classes too skewed 0.99, then Non-linear CF does not seem to have an advantage
+
+even with sample weights, still not helpful 
+[info] From R to Rh, delta(Frobenius norm)= 29.272192971677548
+[info] From T to Th, delta(Frobenius norm)= 14.92889392268832
+[info] How different are lh and lh_new? 0.2104
+[result] F1 score with the original T:  0.2131979695431472
+[result] F1 score with re-estimated Th: 0.1834061135371179
+
+
+(estimateProbThresholds) policy: fmax
+[info] From R to Rh, delta(Frobenius norm)= 27.61871649253301
+[info] From T to Th, delta(Frobenius norm)= 14.831586213098268
+[info] How different are lh and lh_new? 0.1752
+[result] F1 score with the original T:  0.18719211822660098
+[result] F1 score with re-estimated Th: 0.1818181818181818
 
 
 # Why is Rh worse than Th? See the log at analyze_reconstruction() ... 

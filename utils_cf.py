@@ -3893,8 +3893,8 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
     Mc, Lh = polarity_matrix(X, L, p_threshold) # X, pth -> Lh | L -> Mc
     if Po is not None: 
         Mc = Po.toarray() if sparse.issparse(Po) else Po
-    # ... Mc <- Po, as Po has a higher precedence
-    # ... Mc is dense
+        # ... Mc is assigned to Po (a polarity matrix) if it's given
+        # ... Mc is dense
 
     # Mc = Mc.astype(bool)
     w_min = np.min(C[C>0.0])
@@ -3975,16 +3975,14 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
         # ... want pref(FN) -> 0, they really are positive examples, => want them to be 1?
 
     if suppress_max_class: 
-        if verbose: print('(balance_and_scale) Suppress majority sample weights to {}'.format(w_min))
-        
-        # TNs
+        # max class (i.e. majority class) is the negative examples => suppress weights of TNs
         C[ cells_tn ] = C[ cells_tn ] * 0.01
 
     if is_cascade and discount_test: 
         # gamma = 0.5
         if verbose: print('(balance_and_scale) Discount test sample weights by {}'.format(gamma))
         Cr, Ct = C[:,:n_train], C[:,n_train:]
-        Ct = Ct * gamma
+        Ct = Ct * gamma # discount the entire test split
         C = np.hstack([Cr, Ct])
 
     # weights_min = C[Lh == min_class] # C[Mc & Lh == min_class]
@@ -5717,11 +5715,11 @@ def interpolate(X1, X2, W1, W2=None):
     Use 
     ---
     X1: old rating matrix 
-    x2: new rating matrix
+    X2: new rating matrix
     W1: probability filter (aka preference matrix)
 
-        if pref[i,j] == 1, then use X1[i, j]
-        if pref[i,j] == 0, then use X2[i, j]; effectively replacing X1[i,j] by X2[i, j]
+        if W1[i,j]=1, then use X1[i, j]
+        if W1[i,j]=0 => W2[i,j]=1 => use X2[i,j]; effectively replacing X1[i,j] by X2[i, j]
 
     Memo
     ----
