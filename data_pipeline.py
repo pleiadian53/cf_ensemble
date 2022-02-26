@@ -38,7 +38,7 @@ def matrix_to_decoded_dataframe(X, U=None, items=None, **kargs):
         assert X.shape[0] == len(U)
         user_ids = U
 
-    u2u_encoded = {x: i for i, x in enumerate(user_ids)} # name to index
+    u2u_encoded = {x: i for i, x in enumerate(user_ids)} # map name to index, honoring the order in U
     u_encoded2u = {i: x for i, x in enumerate(user_ids)} # index to name
 
     # print(f"> user2user_encoded:\n{user2user_encoded}\n")
@@ -49,7 +49,7 @@ def matrix_to_decoded_dataframe(X, U=None, items=None, **kargs):
         assert X.shape[1] == len(items)
         item_ids = items
 
-    i2i_encoded = {x: i for i, x in enumerate(items_ids)} # item name to index
+    i2i_encoded = {x: i for i, x in enumerate(items_ids)} # map item name to index, honoring the order in items
     i_encoded2i = {i: x for i, x in enumerate(items_ids)} # index to item name
 
     df["userId"] = df["user"].map(u_encoded2u) # map user index (numerical) to user names (string)
@@ -167,13 +167,13 @@ def matrix_to_train_test_split(X, n_train, **kargs):
     col_value = kargs.get('col_value', 'rating')
 
     df = matrix_to_dataframe(X, **kargs)
-    min_rating = min(df[col_value])
-    max_rating = max(df[col_value])
+    min_score = min(df[col_value])
+    max_score = max(df[col_value])
 
     # min and max ratings will be used to normalize the ratings later (not necessary for probability scores)
     normalize = kargs.get('normalize', False)
     if normalize: 
-        y = df[col_value].apply(lambda x: (x - min_rating) / (max_rating - min_rating)).values
+        y = df[col_value].apply(lambda x: (x - min_score) / (max_score - min_score)).values
     else: 
         y = df[col_value].values
 
@@ -235,9 +235,9 @@ def matrix_to_augmented_training_data(R, C, Pc, **kargs):
     # min and max ratings will be used to normalize the ratings later (not necessary for probability scores)
     normalize = kargs.get('normalize', False)
     if normalize: 
-        min_rating = min(df[col_value])
-        max_rating = max(df[col_value])
-        y = df_score[col_value].apply(lambda x: (x - min_rating) / (max_rating - min_rating)).values
+        min_score = min(df[col_value])
+        max_score = max(df[col_value])
+        y = df_score[col_value].apply(lambda x: (x - min_score) / (max_score - min_score)).values
     else: 
         y = df_score[col_value].values
 
@@ -260,6 +260,23 @@ def matrix_to_augmented_training_data(R, C, Pc, **kargs):
 def rating_matrix_to_augmented_training_data(R, C, Pc, **kargs): 
     return matrix_to_augmented_training_data(R, C, Pc, **kargs)
 
+def unravel(R, **kargs): 
+    
+    if is_sparse(R): R = R.A
+    y = np.ravel(R) # order='C'
+
+    if kargs.get("verify", False): 
+        # This operation should be the same as: 
+        _, yp = matrix_to_training_data(R, normalize=False)
+        assert np.all(y == yp)
+    
+    if kargs.get('normalize', False): 
+        min_score = min(values)
+        max_score = max(values)
+        y = (y - min_score) / (max_score - min_score)
+    
+    return y
+
 def matrix_to_training_data(R, **kargs): 
     """
     Convert a rating matrix (R) into a training data set in the user-item-pair format. 
@@ -281,15 +298,17 @@ def matrix_to_training_data(R, **kargs):
     col_item = kargs.get('col_item', 'item')
     col_value = kargs.get('col_value', 'rating')
 
+    if is_sparse(R): R = R.A
+
     df = matrix_to_dataframe(R, **kargs)
     X = df[[col_user, col_item]]
 
     # min and max ratings will be used to normalize the ratings later (not necessary for probability scores)
     normalize = kargs.get('normalize', False)
     if normalize: 
-        min_rating = min(df[col_value])
-        max_rating = max(df[col_value])
-        y = df[col_value].apply(lambda x: (x - min_rating) / (max_rating - min_rating)).values
+        min_score = min(df[col_value])
+        max_score = max(df[col_value])
+        y = df[col_value].apply(lambda x: (x - min_score) / (max_score - min_score)).values
     else: 
         y = df[col_value].values
 
@@ -318,6 +337,8 @@ def matrix_to_dataframe(X, **kargs):
     col_user = kargs.get('col_user', 'user')
     col_item = kargs.get('col_item', 'item')
     col_value = kargs.get('col_value', 'rating')
+
+    if is_sparse(X): X = X.A
 
     # Structure training data in "user-item-value format" in which each training instance x
     # is a user-item pair in their encoded indices, and the label y represents the rating 

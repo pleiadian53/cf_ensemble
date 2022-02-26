@@ -592,6 +592,15 @@ class CFStacker(ClassifierMixin, _BaseCF):
     def cf_fit(self, X=None, y=None, sample_weight=None): # [todo]
         return 
 
+    @staticmethod
+    def cf_fetch2(fold_number=0): 
+        # Load pre-trained data
+        metas = {}
+        for dtype in ['train', 'test', ]: 
+            f = os.path.join(self.data_dir, f'{dtype}-{fold_number}.npz')
+            if os.path.exists(f): 
+                metas[dtype] = dict(np.load(f)) 
+        return metas
     def cf_fetch(self, fold_number=None):
         # Get base predictor-transformed training and test data (i.e. level-1 train and test data)
         if fold_number is None: fold_number = self.fold_number
