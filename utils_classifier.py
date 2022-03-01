@@ -10,8 +10,10 @@ import seaborn as sns
 
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.neighbors import KernelDensity
+
+from sklearn.model_selection import RepeatedStratifiedKFold
 from sklearn.model_selection import cross_val_score
-from sklearn.model_selection import RandomizedSearchCV
+from sklearn.model_selection import RandomizedSearchCV, GridSearchCV
 
 from sklearn.metrics import accuracy_score, confusion_matrix, precision_score, recall_score, roc_auc_score, roc_curve, f1_score
 
@@ -180,6 +182,73 @@ def validate_crf_params(rs, output_path=None, dpi=300, save=True, verbose=True):
         except: 
             pass
     return
+
+# Model selection utilities 
+###############################################################################################
+
+def get_tuned_classifier(model, grid, n_splits=5, n_repeats=3, random_state=53, scoring='f1', verbose=0): 
+    """
+
+    Parameters 
+    ---------- 
+    model: a classifier to tune for its best hyperparameter settings
+    grid: a parameter dictionary
+    """ 
+    def fit_on_data(X, y): 
+        cv = RepeatedStratifiedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=random_state)
+        grid_search = GridSearchCV(estimator=model, param_grid=grid, n_jobs=-1, cv=cv, scoring=scoring, error_score=0)
+        grid_result = grid_search.fit(X, y)
+        
+        # summarize results
+        if verbose: 
+            print("Best: %f using %s" % (grid_result.best_score_, grid_result.best_params_))
+            means = grid_result.cv_results_['mean_test_score']
+            stds = grid_result.cv_results_['std_test_score']
+            params = grid_result.cv_results_['params']
+            for mean, stdev, param in zip(means, stds, params):
+                print("%f (%f) with: %r" % (mean, stdev, param))
+
+        return grid_result # make predictions: call .predict(X_test) or grid_result.best_estimator_.predict(X_test)
+    return fit_on_data
+
+
+# Dfine grid search
+def demo_hyperparameter_tuning(): 
+    """
+
+    Reference 
+    ---------
+    1. How to use GridSearchCV ouptut
+       https://stackoverflow.com/questions/35388647/how-to-use-gridsearchcv-output-for-a-scikit-prediction
+    """
+
+    # example of grid searching key hyperparametres for logistic regression
+    from sklearn.datasets import make_blobs
+    from sklearn.model_selection import RepeatedStratifiedKFold
+    from sklearn.model_selection import GridSearchCV
+    from sklearn.linear_model import LogisticRegression
+    # define dataset
+    X, y = make_blobs(n_samples=1000, centers=2, n_features=100, cluster_std=20)
+    # define models and parameters
+    model = LogisticRegression()
+    solvers = ['newton-cg', 'lbfgs', 'liblinear']
+    penalty = ['l2']
+    c_values = [100, 10, 1.0, 0.1, 0.01]
+
+    grid = dict(solver=solvers,penalty=penalty,C=c_values)
+    cv = RepeatedStratifiedKFold(n_splits=10, n_repeats=3, random_state=1)
+    grid_search = GridSearchCV(estimator=model, param_grid=grid, n_jobs=-1, cv=cv, scoring='accuracy',error_score=0)
+    grid_result = grid_search.fit(X, y)
+    # summarize results
+    print("Best: %f using %s" % (grid_result.best_score_, grid_result.best_params_))
+    means = grid_result.cv_results_['mean_test_score']
+    stds = grid_result.cv_results_['std_test_score']
+    params = grid_result.cv_results_['params']
+    for mean, stdev, param in zip(means, stds, params):
+        print("%f (%f) with: %r" % (mean, stdev, param))
+
+    return grid_result
+
 
 # Performance evaluation utilities
 # 

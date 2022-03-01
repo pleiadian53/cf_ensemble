@@ -16,6 +16,58 @@ import matplotlib.pyplot as plt
 from analyzer import is_sparse
 
 
+def load_pretrained_level1_data(clf=None, fold_number=0, data_dir='./data', verbose=1):
+    import utils_stacking as ustk   
+    import utils_cf as uc 
+
+    # Assuming that pre-trained level-1 datasets are available under ./data, we can simply instantiate a CFStacker and 
+    # fetch the pre-trained data ...
+    if clf is None: 
+        meta_set = ustk.CFStacker.cf_fetch2(fold_number=fold_number, data_dir=data_dir)
+    else: 
+        # Load pre-trained level-1 data using an active CFStacker instance
+        meta_set = clf.cf_fetch()
+    assert len(meta_set) > 0, f"[I/O] No meta-data found at data_dir:\n{data_dir}\n"
+
+    # Read training spilt
+    X_train, y_train = meta_set['train']['X'], meta_set['train']['y'] 
+    n_train = X_train.shape[0] # column vector format
+
+    # Read test split
+    X_test = meta_set['test']['X']
+    y_test = None
+    try: 
+        y_test = meta_set['test']['y']
+    except: 
+        print("[I/O] test label is not available yet. Run the previous code block first.")
+
+    # Names of the base classifiers (nicknamed "users")
+    U = meta_set['train']['U']
+    if verbose: 
+        print(f"[info] list of base classifiers:\n{U}\n")
+
+    ### Structure the rating/probability matrix
+
+    # Rataing/probability matrix and labels for the TRAIN set
+    R = X_train.T # transpose because we need users by items (or classifiers x data) for CF
+    assert R.shape[1] == n_train, f"R should be a users-by-items rating matrix but has shape: {R.shape}, n_train={n_train}"
+    L_train = y_train
+
+    # Rating matrix and labels for the test set
+    T = X_test.T
+    L_test = y_test
+
+    if verbose: 
+        p_threshold = uc.estimateProbThresholds(R, L=L_train, pos_label=1, policy='fmax')
+        print(f"[info] probability thresholds:\n{p_threshold}\n")
+
+    # Use "estimated labels" for the test set; not the true label `L_test` that we are trying to predict
+    # lh = uc.estimateLabels(T, p_th=p_threshold) # We cannot use L_test (cheating), but we have to guesstimate
+    # L = np.hstack((L_train, lh)) 
+    # X = np.hstack((R, T)) 
+
+    return (R, T, U, L_train, L_test)
+
 def matrix_to_decoded_dataframe(X, U=None, items=None, **kargs):
     """
 
@@ -116,31 +168,31 @@ def reestimate_unreliable_only(model, X, n_train, Pc, C=None, **kargs):
 
     Rh, Th = reestimate(model, X, n_train, **kargs)
     Xh = np.hstack((Rh, Th))
-    XXh = interpolate(X, Xh, Pc, C=C, L=L, p_threshold=p_threshold, 
+    Xhi = interpolate(X, Xh, Pc, C=C, L=L, p_threshold=p_threshold, 
               use_confidence_weights=use_confidence_weights, verbose=verbose)
 
-    return (XXh[:,:n_train], XXh[:,n_train:])
+    return (Xhi[:,:n_train], Xhi[:,n_train:])
 
 def interpolate(X, Xh, Pc=None, C=None, L=[], p_threshold=[], use_confidence_weights=False, verbose=0): 
     # from analyzer import is_sparse
     import utils_cf as uc
 
-    W = Pc
+    # W = Pc
     if use_confidence_weights: # Use confidence scores as weights 
         assert C is not None
         if is_sparse(C): C = C.toarray()
         W = uc.softmax(C, axis=0)
     else: 
-        if is_sparse(W): W = W.A 
-        # Note: Why converting to dense? Subtracting a sparse matrix from a nonzero scalar is not supported 
-        #       E.g. can't do 1.0-W if W is sparse
-
-        if W is None: 
+        if Pc is None: 
             W, _ = uc.probability_filter(X, L, p_threshold)
         else: 
+            W = Pc.A if is_sparse(Pc) else Pc
+            # Note: Why converting to dense? Subtracting a sparse matrix from a nonzero scalar is not supported 
+            #       E.g. can't do 1.0-W later if W is sparse
+
             if verbose > 1: 
                 print('(reconstruct) Converting color matrix to a standard probability filter (aka preference matrix) ...')
-            W = uc.to_preference(W) 
+            W = uc.to_preference(W) # Note: this operation won't affect Pc
 
     wmin, wmax = np.min(W), np.max(W)
     assert wmin >= 0 and wmax <= 1, "W is not a probability filter | values: [{}, {}]".format(wmin, wmax)
@@ -212,6 +264,51 @@ def make_sample_weights(R, C, Pc):
     df_conf =  matrix_to_dataframe(Cn, col_value=col_value, shuffle=False)
 
     return df_conf[col_value].values    
+
+def matrix_to_augmented_training_data2(R, C, Pc, **kargs): 
+    assert R.shape == C.shape
+    assert R.shape == Pc.shape 
+
+    col_user = kargs.get('col_user', 'user')
+    col_item = kargs.get('col_item', 'item')
+
+    if is_sparse(C): C = C.A
+    if is_sparse(Pc): Pc = Pc.A
+
+    # Structure R, C and Pc in column coordiante format
+    col_value, col_conf, col_color = ('rating', 'weight', 'color')
+    df_score = matrix_to_dataframe(R, col_value=col_value, shuffle=False)
+    df_conf =  matrix_to_dataframe(C, col_value=col_conf, shuffle=False)
+    df_color = matrix_to_dataframe(Pc, col_value=col_color, shuffle=False)
+
+    X = df_score[[col_user, col_item]]
+
+    # `rating` is the supervised signal
+    # min and max ratings will be used to normalize the ratings later (not necessary for probability scores)
+    normalize = kargs.get('normalize', False)
+    if normalize: 
+        min_score = min(df[col_value])
+        max_score = max(df[col_value])
+        y = df_score[col_value].apply(lambda x: (x - min_score) / (max_score - min_score)).values
+    else: 
+        y = df_score[col_value].values
+
+    N = len(y)
+    # Confidence scores (C) are used to weigh individual training instance (x, y)
+    weights = df_conf[col_conf].values
+    colors = df_color[col_color].values
+    assert (len(weights) == N) and (len(colors) == N)
+
+    # Shuffle the data
+    shuffle = kargs.get('shuffle', False)
+    random_state = kargs.get('random_state', 53)
+    if shuffle:  
+        # np.random.seed(random_state)
+        shuffler = np.random.RandomState(seed=random_state).permutation(N)
+
+        return (X[shuffler], np.column_stack([y[shuffler], weights[shuffler], colors[shuffler]]))
+
+    return (X, np.column_stack(y, weights, colors))
 
 def matrix_to_augmented_training_data(R, C, Pc, **kargs):
     assert R.shape == C.shape

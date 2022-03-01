@@ -4,35 +4,54 @@
 
 
 
-I just uploaded the new CF ensemble code to github. 
+# Instead of using Cw (a dense matrix including weights for FPs, FNs), use Cn (masked confidence matrix)
+Xc, yc, weights, colors = dp.matrix_to_augmented_training_data(X, Cn, Pc) # NOTE: Don't overwrite X (`Xc` is not the same as `X`, which is a rating matrix)
+yc = np.column_stack([yc, weights, colors])
 
-Below are the notebooks that demonstrate how stacking works using scikit-learn's modules. 
+test_size = 0.1
+split_pt = int((1-test_size) * Xc.shape[0])
+X_train, X_val, y_train, y_val = (
+    Xc[:split_pt],
+    Xc[split_pt:],
+    yc[:split_pt],
+    yc[split_pt:])
 
-demo-stacking.ipynb  # regular stacking (for classification and regression)
-demo-cf-stacking.ipynb # CF ensemble method as a stacker
+loss_fn = cm.confidence_weighted_loss
+model = cm.get_cfnet_uncompiled(n_users, n_items, n_factors)
+model.compile(loss=loss_fn, optimizer=keras.optimizers.Adam(lr=0.001))
 
-`demo-cf-stacking` is another notebook that demonstrates key functions in CF ensemble codes using
-scikit-learn's stacking module as the basis. This notebook is incomplete at the moment (
-optimization part is yet to be included)
+tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir="logs")
+history = model.fit(
+    x=X_train,
+    y=y_train,
+    # sample_weight=W_train, # not using sample weight in this case
+    batch_size=64,
+    epochs=100,
+    verbose=1,
+    validation_data=(X_val, y_val), # test how the model predict unseen ratings
+    callbacks=[tensorboard_callback]
+)
 
-In particular, please look for the class definition `CFStacker` in `utils_stacking.py` and 
-see how it works. It's intended to work just like the regular stacker class `StackingClassifier`
-available in scikit-learn. 
+%matplotlib inline
+f, ax1 = plt.subplots(nrows=1, ncols=1,figsize=(20,8))
+
+plt.plot(history.history["loss"])
+plt.plot(history.history["val_loss"])
+plt.title("model loss")
+plt.ylabel("loss")
+plt.xlabel("epoch")
+plt.legend(["train", "test"], loc="upper left")
+plt.show()
+
+%load_ext tensorboard
+%tensorboard --logdir logs
+
+highlight("(C-Sqr) Reestimate the entire rating matrix (X) with learned latent factors/embeddings")
+analyze_reconstruction(reestimate_unreliable_only=False)
+highlight("(C-Sqr) Reestimate ONLY the unreliable entries in X with learned latent factors/embeddings")
+analyze_reconstruction(reestimate_unreliable_only=True)
 
 
-Below are new files added to the code base in addition to the Jupyter notebooks:
-
-utils_stacking.py 
-utils_classifiers.py
-
-I also made a few updates on the following modules: 
-
-cf.py 
-utils_cf.py # <<< most updates are here
-cluster.py 
-evaluate.py
-
-Sequences of DNA with promoter and terminator signals for transcription.
 
 ### Todo ### 
 

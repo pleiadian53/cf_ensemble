@@ -593,11 +593,11 @@ class CFStacker(ClassifierMixin, _BaseCF):
         return 
 
     @staticmethod
-    def cf_fetch2(fold_number=0): 
+    def cf_fetch2(fold_number=0, data_dir='./data'): 
         # Load pre-trained data
         metas = {}
         for dtype in ['train', 'test', ]: 
-            f = os.path.join(self.data_dir, f'{dtype}-{fold_number}.npz')
+            f = os.path.join(data_dir, f'{dtype}-{fold_number}.npz')
             if os.path.exists(f): 
                 metas[dtype] = dict(np.load(f)) 
         return metas

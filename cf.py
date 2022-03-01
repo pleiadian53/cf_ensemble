@@ -2316,18 +2316,19 @@ def reconstruct(C, X, P, Q,
             # case 1: Cui ~ R => Th: None, reconstructed R only
             # case 2: Cui ~ np.hstack((R, T)) => reconstructed (R, T)
             if verbose: div("(reconstruct) weighted averaing between X/original and Xh/new, where Xh = dot(P, Q) | use confidence matrix (C) as weights? {}".format(use_confidence_weights), symbol='#')
+            
             W = Pc # Pc is a color matrix
             if use_confidence_weights: # Use confidence scores as weights 
                 if scipy.sparse.issparse(C): C = C.toarray()
                 W = uc.softmax(C, axis=0)
             else: 
-                if scipy.sparse.issparse(W): W = W.A 
-                # Note: Why converting to dense? Subtracting a sparse matrix from a nonzero scalar is not supported 
-                #       E.g. can't do 1.0-W if W is sparse
-
                 if W is None: 
                     W, _ = uc.probability_filter(X, L, p_threshold)
                 else: 
+                    W = Pc.A if scipy.sparse.issparse(Pc) else Pc
+                    # Note: Why converting to dense? Subtracting a sparse matrix from a nonzero scalar is not supported 
+                    #       E.g. can't do 1.0-W if W is sparse
+
                     if verbose > 1: 
                         print('(reconstruct) Converting color matrix to a standard probability filter (aka preference matrix) ...')
                     W = uc.to_preference(W) 
@@ -2338,7 +2339,7 @@ def reconstruct(C, X, P, Q,
             # Note: 
             # W as a weight matrix: the higher the W[i,j], the more weight on X[i,j]
             # W as a preference matrix: W[i,j] = 1 => use X[i,j] (original value), if W[i,j] = 0, use Xh[i,j] (re-est value)
-            
+
             # Xh = uc.replace(P, Q, X=(W, X), canonicalize=True, 
             #         fill=null_marker, predict_func=ua.predict_by_factors, name=name)
 

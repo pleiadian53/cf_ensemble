@@ -2665,7 +2665,7 @@ def evalConfidenceMatrix(X, L=[], **kargs):
                 'suppress_negative_examples': kargs.get('suppress_negative_examples', False),
                 # 'mask_all_test': kargs.get('mask_all_test', True)
 
-                'is_cascade': kargs.get('is_cascade', False), # if True, X is a concatenation of R and T
+                'is_cascade': kargs.get('is_cascade', True), # if True, X is a concatenation of R and T
 
                 ##########
                 # options: {'user', 'item', 'polarity'} but 'user' is not favorable
@@ -3836,11 +3836,17 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
 
     """
     import scipy.sparse as sparse
-
+   
     tSparsify = False
     if sparse.issparse(C): 
         C = C.toarray()
         tSparsify = True  # convert back to sparse matrix when reweighting is done
+    
+    assert C.shape == X.shape
+    assert len(L) == X.shape[1]
+    if len(U) > 0: assert len(U) == C.shape[0]
+    if n_train > 0 and X.shape[1] > n_train: is_cascade = True
+
     # dependency 
     #   classPrior
     #   polarity_matrix, correctness matrix
@@ -3853,8 +3859,7 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
     verbose = kargs.get('verbose', 1)
 
     ret = classPrior(L, labels=[0, 1], ratio_ref=0.1, verbose=False)
-    if len(U) > 0: assert len(U) == C.shape[0]
-
+    
     if ret['n_min_class'] == 0: 
         # label dtpye 
         lt = np.random.choice(L, 1)[0]
@@ -3876,7 +3881,7 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
         verify_confidence_matrix(C, X=X, L=L, p_threshold=p_threshold, U=U, measure=conf_measure,
                 message='(before) balanced + magnified (alpha={}, beta={}) | dtype: {}'.format(
                                      alpha, beta, 'test set' if is_estimated_labels else 'training set'), 
-                    test_cases=[], plot=True if fold == 1 else False, 
+                    test_cases=[], plot=True if fold == 0 else False, 
                     test_weight_constraints=True)
         print('-' * 80)
 
@@ -3891,10 +3896,8 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
     ### A. re-weighting at global scale 
 
     Mc, Lh = polarity_matrix(X, L, p_threshold) # X, pth -> Lh | L -> Mc
-    if Po is not None: 
-        Mc = Po.toarray() if sparse.issparse(Po) else Po
-        # ... Mc is assigned to Po (a polarity matrix) if it's given
-        # ... Mc is dense
+    if Po is not None: # then we need (L, p_threshold to determine Po)
+       Mc = Po.A if sparse.issparse(Po) else Po
 
     # Mc = Mc.astype(bool)
     w_min = np.min(C[C>0.0])
@@ -4009,7 +4012,7 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
         verify_confidence_matrix(C, X=X, L=L, p_threshold=p_threshold, U=U, measure=conf_measure,
                 message='(after) balanced + magnified (alpha={}, beta={}) | dtype: {}'.format(
                                      alpha, beta, 'test set' if is_estimated_labels else 'training set'), 
-                    test_cases=test_cases, plot=True if fold == 1 else False, 
+                    test_cases=test_cases, plot=True if fold == 0 else False, 
                     test_weight_constraints=True)
     
     ### B. re-weighting per classifier/user
