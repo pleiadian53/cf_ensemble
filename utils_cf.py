@@ -1203,12 +1203,6 @@ def save_data(D, L, fold, method, **kargs):
 
     return 
 
-def to_rating_matrix_dev(**kargs):
-    import data_pipeline_datasink as dsp
-
-    # return value: (R, Td, Tt, train_labels, dev_labels, test_labels, U)
-    return dsp.to_rating_matrix_dev(**kargs)
-
 def shuffle_split(df, labels=[], ratio=0.2, max_size=None, **kargs): 
     """
 
