@@ -1,8 +1,11 @@
 
 
+preditNewItems => predict_new_items()
+
+fast_similarity => pairwise_similarity()
 
 
-
+evaCrossSimilarity => eval_cross_similarity
 
 # Instead of using Cw (a dense matrix including weights for FPs, FNs), use Cn (masked confidence matrix)
 Xc, yc, weights, colors = dp.matrix_to_augmented_training_data(X, Cn, Pc) # NOTE: Don't overwrite X (`Xc` is not the same as `X`, which is a rating matrix)

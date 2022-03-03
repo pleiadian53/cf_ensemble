@@ -801,7 +801,7 @@ def wmf_similarity_ensemble(base_perf=None):
         # Th = np.dot(P, Qt.T)
 
         # use P (user latent features) to construct Su 
-        Su = uc.evalSimilarityByLatentFeatures(P, epsilon=1e-9)
+        Su = uc.eval_similarity_by_latent_factors(P, epsilon=1e-9)
         assert Su.shape[0] == Su.shape[1] == Cui.shape[0]
         print('(test) Sim (Su[i,j] in [0, 1]?):\n%s\n' % Su[:4, :4])
         Th0 = uc.predict(T, Su, kind='user')

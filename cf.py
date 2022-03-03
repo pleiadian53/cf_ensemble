@@ -1414,14 +1414,14 @@ def nmf_similarity_ensemble(**kargs):
         for kind in kinds[:2]: 
             
             factors = P if kind == 'user' else Q  # P: all users vs factors, Q: all items vs factors
-            S = uc.evalSimilarityByLatentFeatures(factors, epsilon=1e-9)
+            S = uc.eval_similarity_by_latent_factors(factors, epsilon=1e-9)
             
             # axis = 0 if kind == 'user' else 1
             dimS = n_users if kind == 'user' else n_items_total
             assert (S.shape[0] == S.shape[1] == dimS), "kind={0}, dim(S)={1} but expecting: {2}".format(kind, S.shape, dimS)
             print('(test) kind={0} | dim(S): {1} (S[i,j] in [0, 1]?):\n{2}\n'.format(kind, S.shape, S[:4, :4]))
 
-            # [note] R, T are to be merged prior to calling predict_nobias or predict_topk
+            # [note] R, T are to be merged prior to calling predict_debiased or predict_topk
             Rh, Th = uc.predict(R, T, S=S, kind=kind, canonicalize=True)
             assert T.shape == Th.shape, "dim(T): {0} but dim(Th): {1}".format(T.shape, Th.shape)
 
@@ -1498,7 +1498,7 @@ def combiner(Th, aggregate_func='mean', axis=0, **kargs):
 
 def combiner_sim(Rh, Th, similarity):
 
-    # S = uc.evalSimilarityByLatentFeatures(factors, epsilon=1e-9)
+    # S = uc.eval_similarity_by_latent_factors(factors, epsilon=1e-9)
     Ra = np.hstack((Rh, Th))
     for j in range(Th.shape[1]): 
         # top_k_items = tuple([np.argsort(similarity[:,j])[:-k-1:-1]])  # top k most similar items
@@ -1541,8 +1541,8 @@ def t_neighborhood_ensemble(**kargs):
         Ra = np.hstack((R, T))  # augmented rating matrix by combining R (from train split) and T (from test split)
         for kind in kinds[:2]: 
 
-            Rc= uc.demean(Ra, kind=kind) # Rc: c, centered
-            S = uc.evalSimilarity(Rc, kind=kind) # cosine similairty
+            Rc= uc.center(Ra, kind=kind) # Rc: c, centered
+            S = uc.eval_similarity(Rc, kind=kind) # cosine similairty
 
             axis = 0 if kind == 'user' else 1
             assert S.shape[0] == Rc.shape[axis]
@@ -1602,7 +1602,7 @@ def t_neighborhood_ensemble(**kargs):
         
             # Use pcorr as weights to predict T 
             if kind.startswith('u'): 
-                S = uc.evalCorrelation(Ra, kind=kind, epsilon=1e-9, to_distance=False)
+                S = uc.eval_correlation(Ra, kind=kind, epsilon=1e-9, to_distance=False)
                 Rh, Th = uc.predict(R, T, S=S, kind=kind, topk=None) # uc.predictNewItemsByCorr(T, R, L_train)
             elif kind.startswith('l'):  # predictions vs true labels 
                 Rh = None # undefined
@@ -1827,8 +1827,7 @@ def run_cluster_analysis(F, U=None, X=None, kind='user', n_clusters=-1, index=0,
         U = ['x{i}'.format(i=i) for i in range(nD)]
     print('(run_cluster_analysis) Running cluster analysis on {role} represented by {n} factors | dim(F): {dimF} | dim(X): (dimX): {dimX}'.format(role=kind, n=nF, dimF=F.shape, dimX=X.shape if X is not None else '?'))
     
-    # Also see: evalSimilarityByWeightedLatentFactors()
-    S = uc.evalSimilarityByLatentFeatures(F, epsilon=1e-9)  # e.g. F <- P when examining user latent vectors
+    S = uc.eval_similarity_by_latent_factors(F, epsilon=1e-9)  # e.g. F <- P when examining user latent vectors
     
     # axis = 0 if kind == 'user' else 1
     dimS = S.shape[0]
@@ -6060,7 +6059,7 @@ def wmf_similarity_ensemble(**kargs):
         # given latent factors
         for kind in kinds[:2]:  # foreach user or item
             factors = P if kind == 'user' else Q
-            S = uc.evalSimilarityByLatentFeatures(factors, epsilon=1e-9)
+            S = uc.eval_similarity_by_latent_factors(factors, epsilon=1e-9)
             save_array(S, kind, fold)
             
             # axis = 0 if kind == 'user' else 1
@@ -6068,7 +6067,7 @@ def wmf_similarity_ensemble(**kargs):
             assert S.shape[0] == S.shape[1] == dimS
             print('(test) kind={0} | dim(S): {1} (S[i,j] in [0, 1]?):\n{2}\n'.format(kind, S.shape, S[:4, :4]))
 
-            # [note] R, T are to be merged prior to calling predict_nobias or predict_topk
+            # [note] R, T are to be merged prior to calling predict_debiased or predict_topk
             Rh, Th = uc.predict(R, T, S=S, kind=kind)
             assert T.shape == Th.shape, "dim(T): {0} but dim(Th): {1}".format(T.shape, Th.shape)
 
@@ -6221,14 +6220,14 @@ def wmf_clustering(**kargs):
         # given latent factors
         for kind in kinds[:2]:  # foreach user or item
             factors = P if kind == 'user' else Q
-            S = uc.evalSimilarityByLatentFeatures(factors, epsilon=1e-9)
+            S = uc.eval_similarity_by_latent_factors(factors, epsilon=1e-9)
             
             # axis = 0 if kind == 'user' else 1
             dimS = n_users if kind == 'user' else n_items_total
             assert S.shape[0] == S.shape[1] == dimS
             print('(test) kind={0} | dim(S): {1} (S[i,j] in [0, 1]?):\n{2}\n'.format(kind, S.shape, S[:4, :4]))
 
-            # [note] R, T are to be merged prior to calling predict_nobias or predict_topk
+            # [note] R, T are to be merged prior to calling predict_debiased or predict_topk
             Rh, Th = uc.predict(R, T, S=S, kind=kind)
             assert T.shape == Th.shape, "dim(T): {0} but dim(Th): {1}".format(T.shape, Th.shape)
 

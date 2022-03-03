@@ -68,6 +68,17 @@ def stdout_redirected(to=os.devnull, stdout=None):
             stdout.flush()
             os.dup2(copied.fileno(), stdout_fd)  # $ exec >&copied
 
+def install(package):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+def pip_install(package):
+    import pip
+    if hasattr(pip, 'main'):
+        pip.main(['install', package])
+    else:
+        pip._internal.main(['install', package]) 
+    return
+
 def check_random_state(seed):
     """
     Turn seed into a np.random.RandomState instance

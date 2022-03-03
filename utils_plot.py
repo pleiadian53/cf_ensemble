@@ -4,11 +4,16 @@
 # ... plotly.plotly is obsolete
 # ... `pip install chart_studio`
 
+import os, sys
 try:
     from chart_studio import plotly 
 except ImportError:
-    from pip._internal import main as pip
-    pip(['install', 'chart_studio'])
+    import subprocess
+    # pip internal is to be deprecated 
+    # from pip._internal import main as pip
+    # pip(['install', 'chart_studio'])
+
+    subprocess.check_call([sys.executable, "-m", "pip", "install", 'chart_studio'])
     from chart_studio import plotly
 
 import plotly as py
@@ -28,7 +33,6 @@ import numpy as np
 # from sns import heatmap
 
 import random
-import os
 
 #######################################################################
 #

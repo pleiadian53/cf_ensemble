@@ -650,8 +650,8 @@ def plot_relation(**kargs):
 
     return
 
-def plot_confidence_matrix(C, X, L, p_th, U=[], n_max=100, path=None, measure='fmax', target_label=None, alpha=10, beta=2, index=0, 
-        ext='pdf', verbose=True, dpi=300, file_id=''): 
+def plot_confidence_matrix(C, X, L, p_th, U=[], n_max=100, measure='fmax', target_label=None, alpha=10, beta=2, index=0, 
+        ext='pdf', verbose=1, dpi=300, file_id='', output_dir=None, output_file=None): 
     """
 
     Memo
@@ -676,10 +676,13 @@ def plot_confidence_matrix(C, X, L, p_th, U=[], n_max=100, path=None, measure='f
     """
     import utils_cf as uc
     # from analyze_similarity import plot_heatmap
-    plt.clf()
-    if path is None: path = os.getcwd()
 
-    print('(plot_confidence_matrix) dim(C): {}'.format(C.shape))
+    plt.clf()
+    if output_dir is None: 
+        output_dir = './data'
+    assert os.path.exists(output_dir), f"Invalid output directory:\n{output_dir}\n"
+
+    if verbose: print('(plot_confidence_matrix) dim(C): {}'.format(C.shape))
     assert C.shape == X.shape
     # plot_heatmap(data=df, output_path=output_path, dpi=300, annot=tAnnotateSimDeg, mask_upper=False)
 
@@ -688,7 +691,7 @@ def plot_confidence_matrix(C, X, L, p_th, U=[], n_max=100, path=None, measure='f
     # print(dfX)
 
     # correctness matrix 
-    Mc, Lh = correctness_matrix(X, L, p_th, target_label=None) # X, pth -> Lh | L -> Mc
+    Mc, Lh = uc.correctness_matrix(X, L, p_th, target_label=None) # X, pth -> Lh | L -> Mc
     # ... correctness matrix (Mc), label matrix (Lh)
     assert C.shape == Lh.shape
 
@@ -710,9 +713,10 @@ def plot_confidence_matrix(C, X, L, p_th, U=[], n_max=100, path=None, measure='f
     # plt.colorbar()
     # plt.show()
 
-    if not file_id: file_id = "M{m}-a{a}b{b}".format(m=measure, a=alpha, b=beta)
-    fname = '{prefix}.P-{suffix}-{index}.{ext}'.format(prefix='confidence_matrix', suffix=file_id, index=index, ext=ext)
-    output_path = os.path.join(path, fname)  # example path: System.analysisPath
+    if not output_file: 
+        if not file_id: file_id = "M{m}-a{a}b{b}".format(m=measure, a=alpha, b=beta)
+        output_file = '{prefix}.P-{suffix}-{index}.{ext}'.format(prefix='confidence_matrix', suffix=file_id, index=index, ext=ext)
+    output_path = os.path.join(output_dir, output_file)  # example path: System.analysisPath
 
     if verbose: print('(plot_confidence_matrix) Saving confidence matrix plot at: {path}'.format(path=output_path))
     saveFig(plt, output_path, dpi=dpi)

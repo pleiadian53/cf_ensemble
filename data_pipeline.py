@@ -11,7 +11,11 @@ from zipfile import ZipFile
 # from tensorflow.keras import layers
 
 from pathlib import Path
+
+# Plot
 import matplotlib.pyplot as plt
+# from matplotlib.pyplot import figure
+import seaborn as sns
 
 from analyzer import is_sparse
 
@@ -495,8 +499,57 @@ def demo_to_rating_matrix():
     ratings_file = movielens_dir / "ratings.csv"
     df = pd.read_csv(ratings_file)
 
-
     return
+
+def generate_imbalanced_data(class_ratio=0.95, verbose=1):
+    # from sklearn import datasets
+    # import matplotlib.pyplot as plt
+    from sklearn.datasets import make_classification
+    from collections import Counter
+    import utils_classifier as uclf
+
+    # get the dataset
+    c_ratio = class_ratio
+
+    def get_dataset(n_samples=5000, noise=True):
+        if noise: 
+            X,y = make_classification(n_samples=n_samples, n_features=100, n_informative=30, 
+                            n_redundant=6, n_repeated=3, n_classes=2, n_clusters_per_class=1,
+                                class_sep=2,
+                                flip_y=0.2, # <<< 
+                                weights=[c_ratio, ], random_state=17)
+        else: 
+            X,y = make_classification(n_samples=n_samples, n_features=100, n_informative=30, 
+                                n_redundant=6, n_repeated=3, n_classes=2, n_clusters_per_class=1,
+                                    class_sep=2, 
+                                    flip_y=0, weights=[c_ratio, ], random_state=17)
+        return X, y
+
+    X, y =  get_dataset(noise=True)
+
+    # Plot data
+    f, ax1 = plt.subplots(nrows=1, ncols=1,figsize=(20,8))
+    sns.scatterplot(X[:,0],X[:,1],hue=y,ax=ax1);
+    ax1.set_title("With Noise");
+    plt.show();
+
+    uniq_labels = np.unique(y)
+    n_classes = len(uniq_labels)
+
+    # Turn into a binary classification problem 
+    if n_classes > 2: 
+        y0 = y
+        y, y_map, le = uclf.to_binary_classification(y, target_class=2)
+        
+        if verbose > 1: 
+            print('> y before:\n', y0)
+            print('> y after:\n', y)
+
+    print(f'> n_classes: {n_classes}\n{uniq_labels}\n')
+
+    counter = Counter(y)
+    if verbose: print(f'> counts:\n{counter}\n') 
+    return X, y
 
 def test(): 
 

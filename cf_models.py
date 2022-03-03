@@ -259,32 +259,15 @@ def demo_cfnet_with_csqr_loss(ctype='Cn', n_factors=50, alpha=10.0, conf_measure
     # Compute various types of confidence matrices
     ####################################################################################
 
-    CX = uc.evalConfidenceMatrix(X, L=L, U=U, 
-                                 p_threshold=p_threshold, # not needed if L is given (suggested use: estimate L outside of this call)
-                                 policy_threshold=policy_threshold,
-                                 conf_measure=conf_measure, 
-                                 fill=0, is_cascade=True, n_train=n_train, 
-                                 fold=fold_number, # for debugging only
-                                 verbose=0) 
-    C0, Pc, p_threshold, *CX_res = CX
-
-    # Cw: A re-weighted (dense) confidence matrix in which confidence scores are adjusted to take into account 
-    #     the disparity in sample sizes (e.g. the size of TPs is usually much smaller than that of TNs in class-imbalanced data)
-    Cw = uc.balance_and_scale(C0, X=X, L=L, Po=Pc, p_threshold=p_threshold, U=U, 
-                        alpha=alpha, conf_measure=conf_measure, n_train=n_train, verbose=0)
-
-    # Cn: A masked confidence matrix where the confidence scores associated with FPs and FNs are set to 0
-    Cn = uc.mask_neutral_and_negative(C0, Pc, is_unweighted=False, weight_negative=0.0, sparsify=True)
-    Cn = uc.balance_and_scale(Cn, X=X, L=L, Po=Pc, p_threshold=p_threshold, U=U, 
-                        alpha=alpha, conf_measure=conf_measure, n_train=n_train, verbose=0)
-    
-    # Test: Wherever Pc is negative, the corresponding entries in Cn must be 0 (By constrast, C is a full/dense confidence matrix)
-    assert np.all(Cn[Pc < 0]==0)
-    assert np.all(Cn[Pc > 0]>0)
-
-    # Color matrix should have 4 distinct values
-    uniq_colors = np.unique(Pc.A if is_sparse(Pc) else Pc)
-    assert len(uniq_colors) == 4, f"n_colors: {uniq_colors}"
+    Pc, C0, Cw, Cn, *rest = \
+        uc.evalConfidenceMatrices(X, L, alpha=alpha, 
+                                     p_threshold=p_threshold, 
+                                        conf_measure=conf_measure, policy_threshold=policy_threshold, 
+                                        
+                                        # Optional debug/test parameters 
+                                        U=U, n_train=n_train, fold_number=fold_number, 
+                                        is_cascade=True,
+                                        verbose=0)
 
     # Prepare training data
     ####################################################################################
@@ -351,8 +334,10 @@ def demo_cfnet_with_csqr_loss(ctype='Cn', n_factors=50, alpha=10.0, conf_measure
     return
 
 
-def demo_stacking(n_iter=5, base_learners=None): 
+def demo_cf_stacking(input_data=None, input_dir='./data', n_iter=5, base_learners=None, verbose=1): 
     from sklearn.metrics import f1_score
+    import data_pipeline as dp
+    from tqdm import tqdm
 
     # Create base predictors
     if base_learners is None: 
@@ -374,13 +359,23 @@ def demo_stacking(n_iter=5, base_learners=None):
                          ('DT', DecisionTreeClassifier(max_depth=5)),
                          ('GPC', GaussianProcessClassifier(1.0 * RBF(1.0))),
                         ]
+    
+    # Generate training data if not provided
+    if input_data is None: 
+        X, y = dp.generate_imbalanced_data(class_ratio=0.95, verbose=1)
+    else: 
+        assert len(input_data) >= 2
+        X, y, *rest = input_data
 
+    # Run CF Stacking with `n_iter` iterations
+    ################################################################
     cf_stackers = []
-    for i in range(n_iter): 
+    for i in tqdm(range(n_iter)): 
+
         # Initialize CF Stacker
-        print(f"[demo] Instantiate CFStacker #[{i+1}] ...")
+        if verbose > 1: print(f"[loop] Instantiate CFStacker #[{i+1}] ...")
         clf = ustk.CFStacker(estimators=base_learners, 
-                                final_estimator=LogisticRegression(), 
+                                final_estimator=LogisticRegression(),  # [todo] Replace this with a completed CF method
                                 work_dir = input_dir,
                                 fold_number = i, # use this to index traing and test data 
                                 verbose=1)
@@ -389,11 +384,11 @@ def demo_stacking(n_iter=5, base_learners=None):
         clf.fit(X_train, y_train)
 
         X_meta_test = clf.transform(X_test)
-        print(f"[info] shape(X_meta_test): {X_meta_test.shape}")
+        if verbose > 1: print(f"[info] shape(X_meta_test): {X_meta_test.shape}")
 
         y_pred = clf.predict(X_test)
         perf_score = f1_score(y_test, y_pred)  # clf.score(X_test, y_test)
-        print('[result]', perf_score)
+        if verbose: print('[result]', perf_score)
 
         # Add test label for the convenience of future evaluation after applying a CF ensemble method
         clf.cf_write(dtype='test', y=y_test)
@@ -417,7 +412,7 @@ def demo_stacking(n_iter=5, base_learners=None):
     print(f"[info] list of base classifiers:\n{U}\n")
 
     # Structure the rating/probability matrix
-    highlight("R: Rataing/probability matrix for the TRAIN set")
+    highlight("R: Rating/probability matrix for the TRAIN set")
     R = X_train.T # transpose because we need users by items (or classifiers x data) for CF
     n_train = R.shape[1]
     L_train = y_train
@@ -425,16 +420,18 @@ def demo_stacking(n_iter=5, base_learners=None):
     T = X_test.T
     L_test = y_test
 
-    # Remember to use "estimated labels" for the test set; not the true label `L_test` that we are trying to predict
-    p_threshold = uc.estimateProbThresholds(R, L=L_train, pos_label=1, policy='fmax')
-    lh = uc.estimateLabels(T, p_th=p_threshold) # We cannot use L_test (cheating), but we have to guesstimate
-    L = np.hstack((L_train, lh)) 
-    X = np.hstack((R, T))
+    # The following are all derived quantities
+    # p_threshold = uc.estimateProbThresholds(R, L=L_train, pos_label=1, policy='fmax')
 
-    assert len(U) == X.shape[0]
-    print(f"> shape(R):{R.shape} || shape(T): {T.shape} => shape(X): {X.shape}")
+    # lh = uc.estimateLabels(T, p_th=p_threshold) # We cannot use L_test (cheating), but we have to guesstimate
+    # L = np.hstack((L_train, lh)) 
+    # NOTE: Remember to use "estimated labels" for the test set; not the true label `L_test` that we are trying to predict
 
-    return (X, L, n_train)
+    # X = np.hstack((R, T))
+    # assert len(U) == X.shape[0]
+    # print(f"> shape(R):{R.shape} || shape(T): {T.shape} => shape(X): {X.shape}")
+
+    return (R, T, U, L_train, L_test)
 
 def test(): 
     demo_cfnet_with_csqr_loss(ctype='Cn')

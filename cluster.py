@@ -589,7 +589,7 @@ def eval_linkage(X, **kargs):
     import scipy.cluster.hierarchy as hc
     from PIL import Image 
     from matplotlib import cm
-    from cluster_utils import evalSimilarity
+    from utils_cluster import evalSimilarity
 
     # X: either a dataframe (in column vector format) or a 2D array (in row vector format) 
 
@@ -639,7 +639,7 @@ def run_cluster_map(X, **kargs): # method='ward', output_dir=None
     import scipy.cluster.hierarchy as hc
     from PIL import Image 
     from matplotlib import cm
-    from cluster_utils import evalSimilarity
+    from utils_cluster import evalSimilarity
     from utils_plot import saveFig
 
     # X: either a dataframe (in column vector format) or a 2D array (in row vector format) 
@@ -1018,7 +1018,7 @@ def spectral_cluster(X, n_clusters, **kargs):
 
 def demo_clustering(output_dir=None):
     from utils_plot import saveFig, highlight
-    from cluster_utils import getAffinityMatrix, eigenDecomposition
+    from utils_cluster import getAffinityMatrix, eigenDecomposition
 
     # import matplotlib.pyplot as plt
     from sklearn.datasets import make_blobs
