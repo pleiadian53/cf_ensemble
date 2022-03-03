@@ -981,7 +981,7 @@ def mfb_ensemble():   # basic matrix factorization
     n_users_test = n_items_test = 0
     for fold in range(n_fold): 
 
-        # different than toPredictiveScores(), toRatingMatrix() masks FP, FN and possible implement other 
+        # different than toPredictiveScores(), to_rating_matrix2() masks FP, FN and possible implement other 
         # strategies that utilize the ground truths 
         R, T, L_train, L_test, U = utils_cf.to_rating_matrix(fold, p_threshold=p_th, missing_value=missing_value, verbose=True)
         # => R: users vs items
@@ -1182,7 +1182,7 @@ def base_predictors(topk=-1, metric='fmax', **kargs):
 
     for index in indices: 
      
-        # different than toPredictiveScores(), toRatingMatrix() masks FP, FN and possible implement other 
+        # different than toPredictiveScores(), to_rating_matrix2() masks FP, FN and possible implement other 
         # strategies that utilize the ground truths 
         if policy_iter == 'cv': 
             R, T, L_train, L_test, U = uc.to_rating_matrix(index, verbose=True, unbag=unbag, bag_count=bag_count)
@@ -1273,7 +1273,7 @@ def nmf_ensemble(**kargs):
     # > this is delegated to stacking
 
     for fold in range(n_fold): 
-        # different than toPredictiveScores(), toRatingMatrix() masks FP, FN and possible implement other 
+        # different than toPredictiveScores(), to_rating_matrix2() masks FP, FN and possible implement other 
         # strategies that utilize the ground truths 
         R, T, L_train, L_test, U = uc.to_rating_matrix(fold, p_threshold=p_th, missing_value=missing_value, verbose=True)
         n_users, n_items = R.shape[0], R.shape[1]
@@ -1389,7 +1389,7 @@ def nmf_similarity_ensemble(**kargs):
     Pe = Qe = 0.
     for fold in range(n_fold): 
      
-        # different than toPredictiveScores(), toRatingMatrix() masks FP, FN and possible implement other 
+        # different than toPredictiveScores(), to_rating_matrix2() masks FP, FN and possible implement other 
         # strategies that utilize the ground truths 
         R, T, L_train, L_test, U = utils_cf.to_rating_matrix(fold, p_threshold=p_th, missing_value=missing_value, verbose=True)
         n_users, n_items, n_items_total = R.shape[0], R.shape[1], len(L_train)+len(L_test)
@@ -1649,7 +1649,7 @@ def t_neighborhood_ensemble(**kargs):
 
     div(message='Todo: Other similarity metrics go here ... ', symbol='-', border=1)
     # for fold in range(n_fold): 
-    #     R, T, L_train, L_test, U = uc.toRatingMatrix(fold, p_threshold=p_th, missing_value=missing_value, verbose=True)
+    #     R, T, L_train, L_test, U = uc.to_rating_matrix2(fold, p_threshold=p_th, missing_value=missing_value, verbose=True)
     
     perfAll = PerformanceMetrics.merge(perfMetrics)  # merge all methods
     print('(test) n_methods: %d' % perfAll.n_methods()); assert perfAll.n_methods() == 8
@@ -6034,7 +6034,7 @@ def wmf_similarity_ensemble(**kargs):
     Pe = Qe = 0.
     for fold in range(n_fold): 
 
-        # different than toPredictiveScores(), toRatingMatrix() masks FP, FN and possible implement other 
+        # different than toPredictiveScores(), to_rating_matrix2() masks FP, FN and possible implement other 
         # strategies that utilize the ground truths 
         Cui, R, T, L_train, L_test, U = uc.toConfidenceMatrix(fold, p_threshold=p_th, 
                                             fill=missing_value, verbose=True, is_augmented=True, mode=params['conf_measure'])
@@ -6197,7 +6197,7 @@ def wmf_clustering(**kargs):
     method = 'wmf' # 'wmf_sim'
     for fold in range(n_fold): 
      
-        # different than toPredictiveScores(), toRatingMatrix() masks FP, FN and possible implement other 
+        # different than toPredictiveScores(), to_rating_matrix2() masks FP, FN and possible implement other 
         # strategies that utilize the ground truths 
         Cui, R, T, L_train, L_test, U = uc.toConfidenceMatrix(fold, p_threshold=p_th, 
                                             fill=missing_value, verbose=True, is_augmented=True, mode=params['conf_measure'])
@@ -8180,7 +8180,7 @@ def test(**kargs):
    
     ### basic operations 
     # fold = 1
-    # R, T, L_train, L_test, U = utils_cf.toRatingMatrix(fold, p_threshold=0.5, missing_value=0, verbose=True)
+    # R, T, L_train, L_test, U = utils_cf.to_rating_matrix2(fold, p_threshold=0.5, missing_value=0, verbose=True)
     # print('(test) dim(R): %s, dim(T): %s' % (str(R.shape), str(T.shape)))
 
     # label matrix doesn't quite make sense because all "users" i.e. classifiers will share the same ground truths 

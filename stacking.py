@@ -274,7 +274,7 @@ def evaluate(fold, stacker, **kargs):
 
     # train_df, train_labels, test_df, test_labels = common.read_fold(project_path, fold)
     unbag = True if method.startswith('aggr') else False
-    R, T, train_labels, test_labels, U = uc.toRatingMatrix(fold, p_threshold=p_th, 
+    R, T, train_labels, test_labels, U = uc.to_rating_matrix2(fold, p_threshold=p_th, 
             missing_value=kargs.get('missing_value', 0), verbose=True, unbag=unbag, bag_count=bag_count)
     n_train, n_test = len(train_labels), len(test_labels)
 

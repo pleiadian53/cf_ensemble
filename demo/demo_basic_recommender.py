@@ -236,6 +236,14 @@ def demo_recommender(**kargs):
 
     return 
 
+def get_mse(pred, actual):
+    from sklearn.metrics import mean_squared_error
+
+    # Ignore nonzero terms.
+    pred = pred[actual.nonzero()].flatten()
+    actual = actual[actual.nonzero()].flatten()
+    return mean_squared_error(pred, actual)
+
 def demo_memory_based_recommender(**kargs): 
     def toRatings(df):
         n_users = df.user_id.unique().shape[0]
@@ -247,6 +255,8 @@ def demo_memory_based_recommender(**kargs):
 
         return ratings
 
+    import utils_cf as uc
+    import utils_knn as uknn
     import pandas as pd
     from sklearn.model_selection import train_test_split
     import getpass # portable way of getting username and password
@@ -284,34 +294,36 @@ def demo_memory_based_recommender(**kargs):
     print('... nU: %d, nI: %d' % (n_u, n_m))
 
     ### compute similarity matrix
-    pairwise_similarity(train, kind='user')
-    user_similarity = pairwise_similarity(train, kind='user')
-    item_similarity = pairwise_similarity(train, kind='item')
+    uknn.pairwise_similarity(train, kind='user')
+    user_similarity = uknn.pairwise_similarity(train, kind='user')
+    item_similarity = uknn.pairwise_similarity(train, kind='item')
     # print("... dim(sim(user): %s, dim(sim(item)): %s" % (str(user_similarity.shape), str(item_similarity.shape)) )
     print("... nU_train: %d, dim(train): %s, dim(user_similarity_train): %s" % (train.shape[0], str(train.shape), str(user_similarity.shape)))
     print("... nItem_train: %d, dim(train): %s, dim(user_similarity_train): %s" % (train.shape[1], str(train.shape), str(item_similarity.shape)))
     print (item_similarity[:4, :4])
 
     ### prediction
-    item_prediction = predict_fast_simple(train, item_similarity, kind='item')
-    user_prediction = predict_fast_simple(train, user_similarity, kind='user')
+    item_prediction = uc.predict_fast_simple(train, item_similarity, kind='item')
+    user_prediction = uc.predict_fast_simple(train, user_similarity, kind='user')
 
     print ('User-based CF MSE: ' + str(get_mse(user_prediction, test)))
     print ('Item-based CF MSE: ' + str(get_mse(item_prediction, test)))
 
     # user_similiarty derived from train 
-    pred = predict_topk(train, user_similarity, kind='user', k=40) 
+    pred = uc.predict_topk(train, user_similarity, kind='user', k=40) 
     print( 'Top-k User-based CF MSE: ' + str(get_mse(pred, test)) )
 
-    pred = predict_topk(train, item_similarity, kind='item', k=40)
+    pred = uc.predict_topk(train, item_similarity, kind='item', k=40)
     print( 'Top-k Item-based CF MSE: ' + str(get_mse(pred, test)) )
     
     kx = [5, 15, 30, 50, 100, 200] 
-    model_select(train, test, user_similarity, item_similarity, k_array=kx)
+    uc.model_select(train, test, user_similarity, item_similarity, k_array=kx)
 
     return
 
 def test(): 
+
+    demo_memory_based_recommender()
 
     return 
 

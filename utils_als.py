@@ -1180,7 +1180,7 @@ def t_ensemble(base_perf=None):
     """ 
     import math
     import utils_cf as uc
-    from cf import base_predictors, toRatingMatrix, analyzePerf
+    from cf import base_predictors, to_rating_matrix2, analyzePerf
 
     n_fold = 5
     missing_value = 0 # marker for missing data
@@ -1203,9 +1203,9 @@ def t_ensemble(base_perf=None):
     nmfCV, topKNMFCV = [], []
     for fold in range(n_fold): 
      
-        # different than toPredictiveScores(), toRatingMatrix() masks FP, FN and possible implement other 
+        # different than toPredictiveScores(), to_rating_matrix2() masks FP, FN and possible implement other 
         # strategies that utilize the ground truths 
-        R, T, L_train, L_test, U = toRatingMatrix(fold, p_threshold=p_th, missing_value=missing_value, verbose=True)
+        R, T, L_train, L_test, U = to_rating_matrix2(fold, p_threshold=p_th, missing_value=missing_value, verbose=True)
         n_users, n_items = R.shape[0], R.shape[1]
         print('[nmf_ensemble] dim(T): %s, n_test: %d' % (str(T.shape), len(L_test)))
 

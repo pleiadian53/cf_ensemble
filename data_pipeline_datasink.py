@@ -6,6 +6,16 @@ import common
 import evaluate
 import os
 
+import utils_sys
+
+# Plotting 
+import matplotlib
+matplotlib.use('Agg') # use a non-interactive backend such as Agg (for PNGs), PDF, SVG or PS.
+import matplotlib.pyplot as plt
+
+# select plotting style 
+plt.style.use('ggplot')  # values: {'seaborn', 'ggplot', }
+
 ###################################################################################
 # 
 # This module contains utility funcitons for accessing (pre-computed) training data 
@@ -267,6 +277,73 @@ def to_label_matrix(fold, p_threshold=0.5, save_=False, missing_value=-1, merge_
 
     return (L, Lt)
 
+def to_rating_matrix2(fold, **kargs): 
+    """
+
+    kargs
+        p_threshold: 0.5 by default
+        missing_value: 0
+        verbose: True
+        mask_: True
+        unbag: False
+        bag_count: -1 by default 
+
+    Memo
+    ----
+    1. diabetes
+       nTP: 4689, nTN: 9011, nFP: 1671, nFN: 3049 (F: 4720)
+
+    """
+    def verify(A):
+        n_total = A.shape[0] * A.shape[1]
+        n_missing = n_total - np.count_nonzero(A)
+        r_missing = n_missing/(n_total + 0.0)
+
+        # print('... A[:10]:\n%s\n' % R[:10])
+        print('toRatingMatrix> n_missing: %d, n_total: %d => ratio: %f' % (n_missing, n_total, r_missing)) 
+        return
+
+    missing_value = kargs.get('missing_value', 0)
+
+    # a single floating number or a list
+    p_threshold = kargs.get('p_threshold', 0.5)   # suggested: the probability threshold that leads to best fmax in the training data
+
+    # thresholds = kargs.get('thresholds', [])
+    
+    # data = toPredictiveScores(fold, project_path=System.projectPath, unbag=kargs.get('unbag', False), bag_count=kargs.get('bag_count', -1))
+    # R = data['train']  # "rating matrix" for the train split  # print('... R0:\n%s\n' % R[:10, :10])
+    # T = data['test']
+    # L_train, L_test = data['train_labels'], data['test_labels']
+    # U = data['users'] if 'users' in data else np.array(range(R.shape[0]))
+    R, T, L_train, L_test, U = to_rating_matrix(fold, **kargs)  # other params: project_path=System.projectPath, unbag=kargs.get('unbag', False), bag_count=kargs.get('bag_count', -1)
+    assert len(U) == R.shape[0]
+
+    # mask the entries of false predicted values
+    if kargs.get('masked', True):
+
+        # user/classifier dependent probability threshoulds
+        # ... p_threshold is a list
+        if hasattr(p_threshold, '__iter__'): assert len(p_threshold) == R.shape[0] 
+        
+        print('(toRatingMatrix) Fold=%d, masking FP and/or FN ...' % fold)
+        R = maskFN(R, L_train, p_threshold=p_threshold, marker=missing_value)
+        R = maskFP(R, L_train,  p_threshold=p_threshold, marker=missing_value)
+
+    #[test]
+    if kargs.get('verbose', True): 
+        nMasked = np.sum( R == missing_value ); print('(toRatingMatrix) fold=%d > nMasked (nFN+nFP): %d' % (fold, nMasked))
+        # print('... R:\n%s\n' % R[:10, :10])
+
+    # [test] toRatingMatrix0() somehow outputs different ordering of probabilities ... ( )  but nMasked is correct!
+    # R2, T2 = toRatingMatrix0(fold, p_threshold=p_threshold, merge_=False, missing_value=missing_value) # training matrix
+    # nMasked = np.sum( R2 == missing_value ); print('(toRatingMatrix0) nMasked: %d' % nMasked)
+    # print('... R2:\n%s\n' % R2[:10, :10])
+
+    # assert np.array_equal(R, R2), "dim(R): %s, dim(R2): %s" % (str(R.shape), str(R2.shape))
+    # assert np.array_equal(T, T2)
+
+    return (R, T, L_train, L_test, U)  # U: users/classifiers
+
 
 # [factor] utils_cf
 def to_rating_matrix_train(fold, p_threshold=0.5, save_=False, missing_value=-1, merge_=False): 
@@ -440,6 +517,126 @@ def to_rating_matrix_random_subsampling(**kargs):
 
         return (R, T, train_labels, test_labels, U)
 
+def shuffle_split(df, labels=[], ratio=0.2, max_size=None, **kargs): 
+    """
+
+    Use
+    ---
+    1. In model_select_core(), model selection is performed to choose the best parameter combination from among a set of candidates; we wish for each iteration
+       in model selection to reference a different version of train-dev split sampled from a pre-specified train-dev split (i.e. the data minus the test set). 
+    """
+    from imblearn.under_sampling import NearMiss, NeighbourhoodCleaningRule 
+
+    index = kargs.get('index', -1)  # used for determining random state (and testing)
+    
+    # note: common.split() returns the output of a train_test_split call
+    train_df, dev_df, train_labels, dev_labels = common.split(df, labels=labels, ratio=ratio, shuffle=True, max_size=max_size, index=index)  # shuffle + split
+
+    # [test]
+    print('(uc.shuffle_split) Cycle #{n} | counts(train_labels): {ctr} | counts(dev_labels): {cdev}'.format(n=kargs.get('index', '?'), ctr=collections.Counter(train_labels), cdev=collections.Counter(dev_labels)))
+
+    if kargs.get('unbag', False):
+        bag_count = kargs['bag_count'] if 'bag_count' in kargs else None
+        train_df = common.unbag(train_df, bag_count) # mean aggregates (average over all bags)
+        dev_df = common.unbag(dev_df, bag_count)
+
+    R = train_df.values.T
+    Td = dev_df.values.T
+    U = train_df.columns.values
+    L_train, L_dev = train_labels, dev_labels
+
+    # test
+    assert R.shape[1] == len(L_train)
+    assert Td.shape[1] == len(L_dev)
+    assert R.shape[0] == Td.shape[0]
+
+    # apply resampling to the training data
+    if kargs.get('resample', False):
+        ver = 3
+        # resampling_method = 'NearMiss(v{})'.format(ver)
+        # sampler = NearMiss(version=ver)    # undersampling based on KNNs (version 3 is less affected by noise)
+
+        resampling_method = "NeighbourhoodCleaningRule"
+        R, L_train = apply_resample(R, L_train, method=resampling_method)
+
+        # dev set 
+        # Xd, Ld = Td.T, L_dev
+        # Xd, Ld = sampler.fit_resample(Xd, Ld)
+        # Td, L_dev = Xd.T, Ld
+    
+    return (R, Td, L_train, L_dev, U)
+
+def apply_resample(X, L, method=''): 
+    from imblearn.under_sampling import NearMiss, NeighbourhoodCleaningRule 
+
+    sampler = None
+    if not method: 
+        ver = 3
+        method = 'NearMiss(v{})'.format(ver)
+        sampler = NearMiss(version=ver)    # undersampling based on KNNs (version 3 is less affected by noise)
+    
+    if method.lower().startswith('neighb'):
+        sampler = NeighbourhoodCleaningRule()  # sampling_strategy: 'auto' (resample all classes but the minority class)
+        print('(apply_resample() resampling method: {}'.format(method))
+    else: 
+        raise NotImplementedError
+ 
+    Xr, Lr = sampler.fit_resample(X.T, L)
+    return (Xr.T, Lr)
+
+# subsumed by to_rating_matrix()
+def toPredictiveScores(fold, **kargs):
+    """
+    Same as to_rating_matrix() but perhaps this template code is easier to work with source codes
+    in recommender system in general. 
+
+    Memo
+    ----
+    1. analogous to toRatings()
+    """
+    train_df, train_labels, test_df, test_labels = common.read_fold(ProjectPath, fold) # [todo] single out this part
+    if kargs.get('unbag', False):
+        bag_count = kargs['bag_count'] if 'bag_count' in kargs else None
+        train_df = common.unbag(train_df, bag_count) # mean aggregates (average over all bags)
+        test_df = common.unbag(test_df, bag_count)
+
+    # get all data IDs 
+    users = train_df.columns.values
+
+    # [note]
+    #   train: predictive scores (analogous to 'ratings') in the training split 
+    #   test:  predictive scores in the test split
+    cols = ['train', 'test', 'train_labels', 'test_labels', ]  
+    data = {col: None for col in cols}
+
+    data['users'] = data['classifiers'] = users
+    data['train_labels'] = train_labels; data['test_labels'] = test_labels
+    
+    for split in ['train', 'test', ]: 
+        ts = train_df if split.startswith('tr') else test_df
+
+        ts = ts.reset_index() # convert multilevel index to flat index
+        idx = ts['id'].values  # item/data IDS
+        assert len(idx) == len(set(idx)), "Data IDs are not unique!"
+        labels = ts['label'].values # ground truth labels
+
+        # split = 'train'
+        nU = nUsers = len(users) # number of users/classifiers
+        nI = nItems = len(idx)  # number of items/data points
+
+        R = []
+        # rating matrix for the training split
+        for i, user in enumerate(users): 
+            predictions = ts[user].values
+            # print('(toPredictiveScores) clf: %s, predictions: %s' % (user, predictions[:10]))
+            if i == 0: assert len(idx) == len(predictions)
+            R.append(predictions)
+        data[split] = np.array(R)
+
+    return data  # a dictionary of 5 entries: ['train', 'test', 'train_labels', 'test_labels', 'users', ]
+def to_rating_matrix0(fold, **kargs): 
+    return toPredictiveScores(fold, **kargs)
+
 # evaluate
 def evalTestSet(labels, Th, **kargs): # labels: true labels, Th: estimates, T: 'true' rating matrix
     # return metrics  # a dictionary: metric -> score
@@ -570,7 +767,6 @@ def demo_cf_ensemble(**kargs):
     evalTestSet0(Pt, Qt, Tt, labels = test_labels)
 
     return
-
 
 def to_rating_matrix(df, users=[], p_threshold=0.5, mask_false_predictions=False, fill=-1): # I: indicator, R: ratings
     """

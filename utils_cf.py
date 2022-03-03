@@ -1203,56 +1203,11 @@ def save_data(D, L, fold, method, **kargs):
 
     return 
 
-# [data_pipeline] future: factor this function to data_pipeline module
-def to_rating_matrix(fold, **kargs):
-    """
-
-
-    Memo
-    ----
-    1. train-dev-test split 
-       <ref> https://stackoverflow.com/questions/38250710/how-to-split-data-into-3-sets-train-validation-and-test/38251213#38251213
-
-       train, validate, test = np.split(df.sample(frac=1), [int(.6*len(df)), int(.8*len(df))]
-
-    """
-    # from cf_spec import System  # [note] the value configured in cf does not propogate here
-    project_path = kargs.get('project_path', System.projectPath)
-    print('(to_rating_matrix) Verify | domain: {0}, project path: {1} =?= {2}'.format(System.domain, project_path, ProjectPath))
-    # project_path = kargs.get('project_path', '?')
-    
-    # tDev = kargs.get('include_devset', False)  # if True, return a train-dev-test split (instead of just train-test split)
-    train_df, train_labels, test_df, test_labels = common.read_fold(project_path, fold) # [todo] single out this part
-    if kargs.get('unbag', False):
-        bag_count = kargs['bag_count'] if 'bag_count' in kargs else None
-        train_df = common.unbag(train_df, bag_count) # mean aggregates (average over all bags)
-        test_df = common.unbag(test_df, bag_count)
-
-    R = train_df.values.T  # R: users vs items
-    T = test_df.values.T 
-    U = train_df.columns.values
-
-    return (R, T, train_labels, test_labels, U)
-
 def to_rating_matrix_dev(**kargs):
-    # consider dev set
-    rDev = kargs.get('dev_ratio', 1./System.foldCount)
-    train_df, train_labels, dev_df, dev_labels, test_df, test_labels = common.read_fold2(ProjectPath, fold, dev_ratio=rDev)        
-    assert dev_df.shape[0] > 0
+    import data_pipeline_datasink as dsp
 
-    if kargs.get('unbag', False):
-        # assert 'bag_count' in kargs
-        bag_count = kargs['bag_count'] if 'bag_count' in kargs else None
-        train_df = common.unbag(train_df, bag_count) # mean aggregates (average over all bags)
-        dev_df = common.unbag(dev_df, bag_count)
-        test_df = common.unbag(test_df, bag_count)
-
-    R = train_df.values.T  # R: users vs items
-    Td = dev_df.values.T
-    Tt = test_df.values.T
-    U = train_df.columns.values
-
-    return (R, Td, Tt, train_labels, dev_labels, test_labels, U)
+    # return value: (R, Td, Tt, train_labels, dev_labels, test_labels, U)
+    return dsp.to_rating_matrix_dev(**kargs)
 
 def shuffle_split(df, labels=[], ratio=0.2, max_size=None, **kargs): 
     """
@@ -1262,64 +1217,15 @@ def shuffle_split(df, labels=[], ratio=0.2, max_size=None, **kargs):
     1. In model_select_core(), model selection is performed to choose the best parameter combination from among a set of candidates; we wish for each iteration
        in model selection to reference a different version of train-dev split sampled from a pre-specified train-dev split (i.e. the data minus the test set). 
     """
-    from imblearn.under_sampling import NearMiss, NeighbourhoodCleaningRule 
-
-    index = kargs.get('index', -1)  # used for determining random state (and testing)
+    import data_pipeline_datasink as dsp
     
-    # note: common.split() returns the output of a train_test_split call
-    train_df, dev_df, train_labels, dev_labels = common.split(df, labels=labels, ratio=ratio, shuffle=True, max_size=max_size, index=index)  # shuffle + split
-
-    # [test]
-    print('(uc.shuffle_split) Cycle #{n} | counts(train_labels): {ctr} | counts(dev_labels): {cdev}'.format(n=kargs.get('index', '?'), ctr=collections.Counter(train_labels), cdev=collections.Counter(dev_labels)))
-
-    if kargs.get('unbag', False):
-        bag_count = kargs['bag_count'] if 'bag_count' in kargs else None
-        train_df = common.unbag(train_df, bag_count) # mean aggregates (average over all bags)
-        dev_df = common.unbag(dev_df, bag_count)
-
-    R = train_df.values.T
-    Td = dev_df.values.T
-    U = train_df.columns.values
-    L_train, L_dev = train_labels, dev_labels
-
-    # test
-    assert R.shape[1] == len(L_train)
-    assert Td.shape[1] == len(L_dev)
-    assert R.shape[0] == Td.shape[0]
-
-    # apply resampling to the training data
-    if kargs.get('resample', False):
-        ver = 3
-        # resampling_method = 'NearMiss(v{})'.format(ver)
-        # sampler = NearMiss(version=ver)    # undersampling based on KNNs (version 3 is less affected by noise)
-
-        resampling_method = "NeighbourhoodCleaningRule"
-        R, L_train = apply_resample(R, L_train, method=resampling_method)
-
-        # dev set 
-        # Xd, Ld = Td.T, L_dev
-        # Xd, Ld = sampler.fit_resample(Xd, Ld)
-        # Td, L_dev = Xd.T, Ld
-    
-    return (R, Td, L_train, L_dev, U)
+    # return value: (R, Td, L_train, L_dev, U)
+    return dsp.shuffle_split(df, labels=labels, ratio=ratio, max_size=max_size, **kargs)
 
 def apply_resample(X, L, method=''): 
-    from imblearn.under_sampling import NearMiss, NeighbourhoodCleaningRule 
-
-    sampler = None
-    if not method: 
-        ver = 3
-        method = 'NearMiss(v{})'.format(ver)
-        sampler = NearMiss(version=ver)    # undersampling based on KNNs (version 3 is less affected by noise)
-    
-    if method.lower().startswith('neighb'):
-        sampler = NeighbourhoodCleaningRule()  # sampling_strategy: 'auto' (resample all classes but the minority class)
-        print('(apply_resample() resampling method: {}'.format(method))
-    else: 
-        raise NotImplementedError
- 
-    Xr, Lr = sampler.fit_resample(X.T, L)
-    return Xr.T, Lr
+    import data_pipeline_datasink as dsp
+    # return value: (Xr.T, Lr)
+    return dsp.apply_resample(X, L, method=method)
 
 def to_rating_matrix_random_subsampling(**kargs):
     """
@@ -1336,80 +1242,9 @@ def to_rating_matrix_random_subsampling(**kargs):
         to_rating_matrix_random_subsampling(dev_ratio=1/5., fold_count=5, policy='random_cv_fold')
     
     """ 
-    import pandas as pd
-    from cf_spec import System
-
-    project_path = kargs.get('project_path', System.projectPath)
-    print('(to_rating_matrix_random_subsampling) domain: {0}, project path: {1} =?= {2} ... (verify)'.format(System.domain, project_path, ProjectPath))
-
-    fold = kargs.pop('fold', -1)
-    rDev = kargs.get('dev_ratio', 1./System.foldCount)
-    rTest = kargs.get('test_ratio', 1./System.foldCount)
-
-    # kargs['include_devset'] = True
-    if fold > 0: return to_rating_matrix_dev(**kargs) # (R, Td, Tt, train_labels, dev_labels, test_labels, U)
-
-    # ... otherwise, proceed with the random subsampling 
-    fold_count = kargs.get('fold_count', System.foldCount)
-    
-    #########################################
-    # ... consider subsampling of the entire dataset (todo)
-    policy = 'random_cv_fold' # assuming that data within each fold is already a random subset of the entire dataset
-    # if policy.startswith('random_cv'): 
-    # else: 
-    #     # for fold in range(fold_count):
-    #     #     train_df, train_labels, test_df, test_labels = common.read_fold(ProjectPath, fold) # [todo] single out this part
-    #     raise NotImplementedError
-    #########################################
-        
-    # the dev set is slightly smaller than test test because dev set is derived from an inner cv partition
-    shuffle = kargs.get('shuffle', True)
-    train_df, train_labels, dev_df, dev_labels, test_df, test_labels = common.read_random_fold(project_path, fold_count=fold_count, dev_ratio=rDev, test_ratio=rTest, shuffle=shuffle)
-
-    if kargs.get('unbag', False):
-        # assert 'bag_count' in kargs
-        bag_count = kargs['bag_count'] if 'bag_count' in kargs else None
-        train_df = common.unbag(train_df, bag_count) # mean aggregates (average over all bags)
-        dev_df = common.unbag(dev_df, bag_count)
-        test_df = common.unbag(test_df, bag_count)
-
-    # >>> by default, we will consider a train-dev-test split unless otherwise specified 
-    tTrainDevTest = kargs.get('train_dev_test', True)
-    if tTrainDevTest: 
-
-        # print('... (verify) dev_df | type: %s, value: %s' % (type(dev_df), dev_df.head(10)))
-        assert dev_df.shape[0] > 0 
-        assert train_df.shape[1] == dev_df.shape[1] == test_df.shape[1], "dim(train_df): {0}, dim(dev_df): {1}, dim(test_df): {2}".format(train_df.shape, dev_df.shape, test_df.shape)
-
-        print('... size(train): {Ntr}, size(dev): {Nd}, size(test): {Nt}'.format(Ntr=train_df.shape[0], Nd=dev_df.shape[0], Nt=test_df.shape[0]))
-        R = train_df.values.T  # R: users vs items
-        Td = dev_df.values.T
-        Tt = test_df.values.T
-        U = train_df.columns.values
-
-        # >>> save index data, this is important when saving the CF-transformed training data
-        if kargs.get('return_index', False): 
-            train_combined = pd.concat([train_df, dev_df])
-            Rx = train_combined.index # a MultiIndex with names=['id', 'label']
-            Tx = test_df.index
-            return (R, Td, Tt, train_labels, dev_labels, test_labels, U, Rx, Tx)
-
-        return (R, Td, Tt, train_labels, dev_labels, test_labels, U)
-    else: 
-        train_df = pd.concat([train_df, dev_df])
-        train_labels = np.hstack((train_labels, dev_labels))
-
-        print('... size(train): {Ntr}, size(dev): {Nd}, size(test): {Nt}'.format(Ntr=train_df.shape[0], Nd=0, Nt=test_df.shape[0]))
-        R = train_df.values.T  # R: users vs items
-        T = test_df.values.T
-        U = train_df.columns.values
-
-        if kargs.get('return_index', False): 
-            Rx = train_df.index # a MultiIndex with names=['id', 'label']
-            Tx = test_df.index
-            return (R, T, train_labels, test_labels, U, Rx, Tx)
-
-        return (R, T, train_labels, test_labels, U)
+    import data_pipeline_datasink as dsp
+    # return (R, T, train_labels, test_labels, U)
+    return dsp.to_rating_matrix_random_subsampling(**kargs)
 
 # subsumed by to_rating_matrix()
 def toPredictiveScores(fold, **kargs):
@@ -1421,71 +1256,30 @@ def toPredictiveScores(fold, **kargs):
     ----
     1. analogous to toRatings()
     """
-    train_df, train_labels, test_df, test_labels = common.read_fold(ProjectPath, fold) # [todo] single out this part
-    if kargs.get('unbag', False):
-        bag_count = kargs['bag_count'] if 'bag_count' in kargs else None
-        train_df = common.unbag(train_df, bag_count) # mean aggregates (average over all bags)
-        test_df = common.unbag(test_df, bag_count)
+    import data_pipeline_datasink as dsp
+    return dsp.toPredictiveScores(fold, **kargs)  # a dictionary of 5 entries: ['train', 'test', 'train_labels', 'test_labels', 'users', ]
+def to_rating_matrix0(fold, **kargs):
+    return toPredictiveScores(fold, **kargs)
 
-    # get all data IDs 
-    users = train_df.columns.values
+# [data_pipeline] future: factor this function to data_pipeline module
+def to_rating_matrix(fold, **kargs):
+    """
 
-    # [note]
-    #   train: predictive scores (analogous to 'ratings') in the training split 
-    #   test:  predictive scores in the test split
-    cols = ['train', 'test', 'train_labels', 'test_labels', ]  
-    data = {col: None for col in cols}
 
-    data['users'] = data['classifiers'] = users
-    data['train_labels'] = train_labels; data['test_labels'] = test_labels
-    
-    for split in ['train', 'test', ]: 
-        ts = train_df if split.startswith('tr') else test_df
+    Memo
+    ----
+    1. train-dev-test split 
+       <ref> https://stackoverflow.com/questions/38250710/how-to-split-data-into-3-sets-train-validation-and-test/38251213#38251213
 
-        ts = ts.reset_index() # convert multilevel index to flat index
-        idx = ts['id'].values  # item/data IDS
-        assert len(idx) == len(set(idx)), "Data IDs are not unique!"
-        labels = ts['label'].values # ground truth labels
+       train, validate, test = np.split(df.sample(frac=1), [int(.6*len(df)), int(.8*len(df))]
 
-        # split = 'train'
-        nU = nUsers = len(users) # number of users/classifiers
-        nI = nItems = len(idx)  # number of items/data points
+    """
+    import data_pipeline_datasink as dsp
 
-        R = []
-        # rating matrix for the training split
-        for i, user in enumerate(users): 
-            predictions = ts[user].values
-            # print('(toPredictiveScores) clf: %s, predictions: %s' % (user, predictions[:10]))
-            if i == 0: assert len(idx) == len(predictions)
-            R.append(predictions)
-        data[split] = np.array(R)
+    # return value: (R, T, train_labels, test_labels, U)
+    return dsp.to_rating_matrix(fold, **kargs)
 
-    return data  # a dictionary of 5 entries: ['train', 'test', 'train_labels', 'test_labels', 'users', ]
-
-# # utils_cf
-# def maskFN(R, labels, p_threshold=0.5, marker=0):
-#     Rp = R.copy()
-#     L = np.array(labels)[np.newaxis, :]
-    
-#     # [test]
-#     # print('(maskFN) R:\n%s\n' % R[:4, :4])
-#     nFN = np.sum( (R<p_threshold) & (L == 1) ); print('(maskFN) nFN=%d' % nFN)
-
-#     Rp[(R<p_threshold) & (L == 1)] = marker
-
-#     return Rp
-# # utils_cf
-# def maskFP(R, labels, p_threshold=0.5, marker=0): 
-#     Rp = R.copy()
-#     L = np.array(labels)[np.newaxis, :]
-    
-#     nFP = np.sum( (R >= p_threshold) & (L == 0) ); print('(maskFP) nFP=%d' % nFP)
-
-#     Rp[(R >= p_threshold) & (L == 0)] = marker
-
-#     return Rp
-
-def toRatingMatrix(fold, **kargs): 
+def to_rating_matrix2(fold, **kargs): 
     """
 
     kargs
@@ -1502,55 +1296,9 @@ def toRatingMatrix(fold, **kargs):
        nTP: 4689, nTN: 9011, nFP: 1671, nFN: 3049 (F: 4720)
 
     """
-    def verify(A):
-        n_total = A.shape[0] * A.shape[1]
-        n_missing = n_total - np.count_nonzero(A)
-        r_missing = n_missing/(n_total + 0.0)
-
-        # print('... A[:10]:\n%s\n' % R[:10])
-        print('toRatingMatrix> n_missing: %d, n_total: %d => ratio: %f' % (n_missing, n_total, r_missing)) 
-        return
-
-    missing_value = kargs.get('missing_value', 0)
-
-    # a single floating number or a list
-    p_threshold = kargs.get('p_threshold', 0.5)   # suggested: the probability threshold that leads to best fmax in the training data
-
-    # thresholds = kargs.get('thresholds', [])
-    
-    # data = toPredictiveScores(fold, project_path=System.projectPath, unbag=kargs.get('unbag', False), bag_count=kargs.get('bag_count', -1))
-    # R = data['train']  # "rating matrix" for the train split  # print('... R0:\n%s\n' % R[:10, :10])
-    # T = data['test']
-    # L_train, L_test = data['train_labels'], data['test_labels']
-    # U = data['users'] if 'users' in data else np.array(range(R.shape[0]))
-    R, T, L_train, L_test, U = to_rating_matrix(fold, **kargs)  # other params: project_path=System.projectPath, unbag=kargs.get('unbag', False), bag_count=kargs.get('bag_count', -1)
-    assert len(U) == R.shape[0]
-
-    # mask the entries of false predicted values
-    if kargs.get('masked', True):
-
-        # user/classifier dependent probability threshoulds
-        # ... p_threshold is a list
-        if hasattr(p_threshold, '__iter__'): assert len(p_threshold) == R.shape[0] 
-        
-        print('(toRatingMatrix) Fold=%d, masking FP and/or FN ...' % fold)
-        R = maskFN(R, L_train, p_threshold=p_threshold, marker=missing_value)
-        R = maskFP(R, L_train,  p_threshold=p_threshold, marker=missing_value)
-
-    #[test]
-    if kargs.get('verbose', True): 
-        nMasked = np.sum( R == missing_value ); print('(toRatingMatrix) fold=%d > nMasked (nFN+nFP): %d' % (fold, nMasked))
-        # print('... R:\n%s\n' % R[:10, :10])
-
-    # [test] toRatingMatrix0() somehow outputs different ordering of probabilities ... ( )  but nMasked is correct!
-    # R2, T2 = toRatingMatrix0(fold, p_threshold=p_threshold, merge_=False, missing_value=missing_value) # training matrix
-    # nMasked = np.sum( R2 == missing_value ); print('(toRatingMatrix0) nMasked: %d' % nMasked)
-    # print('... R2:\n%s\n' % R2[:10, :10])
-
-    # assert np.array_equal(R, R2), "dim(R): %s, dim(R2): %s" % (str(R.shape), str(R2.shape))
-    # assert np.array_equal(T, T2)
-
-    return (R, T, L_train, L_test, U)  # U: users/classifiers
+    import data_pipeline_datasink as dsp 
+    # return (R, T, L_train, L_test, U)  # U: users/classifiers
+    return dsp.to_rating_matrix2(fold, **kargs)
 
 def estimateProbThresholds(R, L=[], pos_label=1, neg_label=0, policy='prior', ratio_small_class=0.01):
     """
@@ -6941,7 +6689,7 @@ def demo_to_rating_matrix(**kargs):
     kargs['p_threshold'] = 0.5
     for fold in [0, ]: # range(n_fold): 
         train_df, train_labels, test_df, test_labels = common.read_fold(ProjectPath, fold)
-        R, T, L_train, L_test, U = toRatingMatrix(fold, **kargs)
+        R, T, L_train, L_test, U = to_rating_matrix2(fold, **kargs)
         assert train_df.shape == R.T.shape 
         print('dim(train_df): {0} vs dim(R.T): {1}'.format(train_df.shape, R.T.shape))
 

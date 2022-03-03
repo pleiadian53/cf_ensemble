@@ -213,7 +213,7 @@ def toConfidenceMatrix(fold, **kargs):
 
     # from sklearn.metrics import brier_score_loss
     import scipy.sparse as sparse
-    from cf import toRatingMatrix
+    from cf import to_rating_matrix2
     import utils_cf as uc
 
     missing_value = kargs.get('fill', 0) # [todo] marker for missing data
@@ -221,7 +221,7 @@ def toConfidenceMatrix(fold, **kargs):
     p_th = kargs.get('p_threshold', 0.5)
     topk_users, topk_items = 0, 0  # default, use all by setting to 0
     
-    R, T, L_train, L_test, U = toRatingMatrix(fold, p_threshold=p_th, missing_value=missing_value, verbose=True)
+    R, T, L_train, L_test, U = to_rating_matrix2(fold, p_threshold=p_th, missing_value=missing_value, verbose=True)
     n_users, n_items = R.shape[0], R.shape[1]
     print('[toConfidenceMatrix] dim(T): %s, n_test: %d' % (str(T.shape), len(L_test))) 
 
@@ -701,7 +701,7 @@ def t_wmf_ensemble(base_perf=None):
     perfx = []
     for fold in [0, ]: # range(n_fold): 
      
-        # different than toPredictiveScores(), toRatingMatrix() masks FP, FN and possible implement other 
+        # different than toPredictiveScores(), to_rating_matrix2() masks FP, FN and possible implement other 
         # strategies that utilize the ground truths 
         Cui, T, L_train, L_test, U = uc.toConfidenceMatrix(fold, p_threshold=p_th, fill=missing_value, verbose=True, is_augmented=True)
         n_users, n_items = Cui.shape[0], Cui.shape[1]
@@ -785,7 +785,7 @@ def wmf_similarity_ensemble(base_perf=None):
     wmfCV, topKWMFCV = [], []
     for fold in range(n_fold): 
      
-        # different than toPredictiveScores(), toRatingMatrix() masks FP, FN and possible implement other 
+        # different than toPredictiveScores(), to_rating_matrix2() masks FP, FN and possible implement other 
         # strategies that utilize the ground truths 
         Cui, T, L_train, L_test, U = uc.toConfidenceMatrix(fold, p_threshold=p_th, missing_value=missing_value, verbose=True)
         n_users, n_items = Cui.shape[0], Cui.shape[1]
