@@ -4003,6 +4003,7 @@ def toConfidenceMatrix(X, L, **kargs):
     U = users = kargs.get('U', []) # names of users/classifiers
     is_cascade = kargs.get('is_cascade', False) # [note] cascade mode seems more favorable (i.e. X=[R|T])
     verbose = kargs.get('verbose', 1)
+    alpha = kargs.get('alpha', 10) # see `balance_and_scale()`
 
     # Obsolete parameters (but possibly useful) 
     # topk_users, topk_items = 0, 0  # default, use all by setting to 0
@@ -4168,7 +4169,7 @@ def toConfidenceMatrix(X, L, **kargs):
         n_nonzeros = np.sum(Pc != 0)
 
     if verbose: 
-        print('(toConfidenceMatrix) Cui: alpha={}, shape(Cui)={}, n_zeros (uncertain)={} (>? 0) vs n_nonzeros={} (masked ratio={})'.format(alpha, 
+        print('(toConfidenceMatrix) Cui: hape(Cui)={}, n_zeros (uncertain)={} (>? 0) vs n_nonzeros={} (masked ratio={})'.format( 
                  Cui.shape, n_zeros, n_nonzeros, n_zeros/(Cui.shape[0] * Cui.shape[1] + 0.0)))
         
     # Confidence score scaling is now factored into `balance_and_scale`
