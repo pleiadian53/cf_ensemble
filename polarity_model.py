@@ -12,7 +12,7 @@ from sklearn.metrics import mean_squared_error
 from sklearn.preprocessing import normalize
 
 # CF modules
-from analyzer import is_sparse
+# from analyzer import is_sparse
 import cf_spec
 from cf_spec import System
 import common, utilities
@@ -72,7 +72,7 @@ def is_color_matrix(Pc):
             tval = False
             break 
     return tval
-def color_matrix(X, L, p_th, reduced_negative=False, pos_label=1, neg_label=0): 
+def color_matrix(X, L, p_th, reduced_negative=False, codes={}, pos_label=1, neg_label=0): 
     """
 
     Parameters
@@ -82,21 +82,21 @@ def color_matrix(X, L, p_th, reduced_negative=False, pos_label=1, neg_label=0):
 
     """
     sample_types = Polarity.sample_types
-    codes = Polarity.codes
+    if len(codes)==0: codes = Polarity.codes
 
-    Mc, Lh = probability_filter(X, L, p_th)  
-    # ... Mc is a (0, 1)-matrix where 1: {TP, TN} and 0: {FP, FN}
+    Pf, Lh = probability_filter(X, L, p_th)  
+    # ... Pf is a (0, 1)-matrix where 1: {TP, TN} and 0: {FP, FN}
     # ... Lh is an label matrix estimated via `p_th`
     
     n_users = X.shape[0]
 
-    predict_pos = (L[None, :] == pos_label)  # Given BP's prediction Lh, select entries ~ target label
-    predict_neg = (L[None, :] == neg_label)
+    predict_pos = (Lh == pos_label)  # Given BP's prediction Lh, select entries ~ target label
+    predict_neg = (Lh == neg_label)
 
-    cells_tp = (Mc == 1) & predict_pos  # probability is correct and it predicts positive => TP
-    cells_tn = (Mc == 1) & predict_neg
-    cells_fp = (Mc == 0) & predict_pos  # probability is wrong while attempt to predict positive => FP
-    cells_fn = (Mc == 0) & predict_neg
+    cells_tp = (Pf == 1) & predict_pos  # probability is correct and it predicts positive => TP
+    cells_tn = (Pf == 1) & predict_neg
+    cells_fp = (Pf == 0) & predict_pos  # probability is wrong while attempt to predict positive => FP
+    cells_fn = (Pf == 0) & predict_neg
 
     Pc = np.zeros(X.shape)
     Pc[cells_tp] = codes['tp']
@@ -109,6 +109,38 @@ def color_matrix(X, L, p_th, reduced_negative=False, pos_label=1, neg_label=0):
         Pc[cells_fn] = codes['fn']
 
     return Pc, Lh
+
+def verify_colors(Pc, X=None):
+    # Foreach data point (column vector): 
+    #    TP must pairs with FN (if any)
+    #    TN must pairs with FP (if any)
+    P_is_sparse = False
+    if sparse.issparse(Pc): 
+        Pc = Pc.A
+        P_is_sparse = True
+    if X is not None: 
+        assert Pc.shape == X.shape
+
+    max_colors = []
+    for j in range(Pc.shape[1]):
+        colors = set(np.unique(Pc[:, j]))
+        max_colors.append(max(colors)) # TP or TN exists? 
+
+        nc = len(colors)
+        assert nc <= 2, f"There can be at most 2 colors in one instance but got n={nc}"
+        if nc == 2: 
+            if 2 in colors: 
+                assert -1 in colors, f"TP(2) can only pair with FN (-1) but got: {colors}"
+            elif 1 in colors: 
+                assert -2 in colors, f"TN(1) can only pair with FP (-2) but got: {colors}"
+            else: 
+                raise ValueError(f"Invalid color mixture: {colors} at position col={j}")
+
+    # Convert back to sparse matrix format if necessary
+    # if P_is_sparse: 
+    #     Pc = sparse.csr_matrix(Pc)
+    # ... it turns out that this is unnecssary because Pc's sparseness will remain unchanged after the call
+    return np.array(max_colors)
 
 def polarity_to_preference(**kargs): 
     return to_preference(**kargs)
@@ -1716,14 +1748,6 @@ def polarity_sample_bootstrap(R, C, p_th=[], Lr=[], p_model={}, n_samples=100, R
     # precondition: polarity_feature_extraction() has been involved
     n_users = R.shape[0]
 
-    # Mc, Lh = probability_filter(R, Lr, p_th)  # Mc is a (0, 1)-matrix
-    # predict_pos = (Lh == pos_label)  # Given BP's prediction Lh, select entries ~ target label
-    # predict_neg = (Lh == neg_label)
-    # cells_tp = (Mc == 1) & predict_pos   # estimated
-    # cells_tn = (Mc == 1) & predict_neg
-    # cells_fp = (Mc == 0) & predict_pos
-    # cells_fn = (Mc == 0) & predict_neg
-
     if n_samples < 1: n_samples = 1
     Ra = np.zeros((n_users, n_samples))
     Ca = np.zeros((n_users, n_samples))
@@ -1893,8 +1917,8 @@ def polarity_feature_extraction(R, Lr, p_th, T, Lt=None, C=None, U=None,
 
     predict_pos = (Lh == pos_label)  # Given BP's prediction Lh, select entries ~ target label
     predict_neg = (Lh == neg_label)
-    cells_tp = (Mc == 1) & predict_pos   # estimated
-    cells_tn = (Mc == 1) & predict_neg
+    cells_tp = (Mc == 1) & predict_pos  # estimated
+    cells_tn = (Mc == 1) & predict_neg 
     cells_fp = (Mc == 0) & predict_pos
     cells_fn = (Mc == 0) & predict_neg
     Ntp = np.sum(cells_tp)

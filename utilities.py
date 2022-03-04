@@ -1,27 +1,23 @@
 import sklearn.metrics
+
 from numpy import random, nanmax
+import numpy as np
+
 from pandas import concat, read_csv, DataFrame
 import math
 
 
+def normalize(A, order=2, axis=-1):
+    l2 = np.atleast_1d(np.linalg.norm(A, order, axis))
+    l2[l2==0] = 1
+    return A / np.expand_dims(l2, axis)
 
-def softmax(X, axis=0): 
-    # if scipy.sparse.issparse(X): X = X.toarray()
-    # column-wise softmax
-    X = X.astype(float)
-    if X.ndim==1:
-        S=np.sum(np.exp(X))
-        return np.exp(X)/S
-    elif X.ndim==2:
-        Xw= np.zeros_like(X)
-        m,n = X.shape
-        for j in range(n):
-            S=np.sum(np.exp(X[:,j])) # column sum-of-exp
-            Xw[:,j]=np.exp(X[:,j])/S
-        return Xw
-    else:
-        print("The input array is not 1- or 2-dimensional.")
-    return X
+def softmax(x, axis=0):
+    e_x = np.exp(x - np.max(x))
+    return e_x / e_x.sum(axis=axis)
+
+def smooth(loss, cur_loss):
+    return loss * 0.999 + cur_loss * 0.001
 
 # Note: For demo only
 def pearson_correlation(object1, object2):

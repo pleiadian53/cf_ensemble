@@ -3382,10 +3382,10 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
     """
     import scipy.sparse as sparse
    
-    tSparsify = False
+    C_is_sparse = False
     if sparse.issparse(C): 
         C = C.A # C.toarray()
-        tSparsify = True  # convert back to sparse matrix when reweighting is done
+        C_is_sparse = True  # convert back to sparse matrix when reweighting is done
     
     assert C.shape == X.shape
     assert len(L) == X.shape[1]
@@ -3621,7 +3621,7 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
     if verbose: print('[info] class stats: {o}'.format(o=ret))
 
     # ... C is dense at this point
-    if sparse.issparse(Po) or sparsify: # then Cn must also be sparse to be consistent
+    if C_is_sparse or sparsify: # then Cn must also be sparse to be consistent
         C = sparse.csr_matrix(C)
 
     return C   
@@ -5230,153 +5230,12 @@ def predict_by_factors(P, Q, canonicalize=True, name='X'):
     return Xh    
 
 def ratio_of_alignment2(Xpf, Mc, Lh, verify=True, verbose=True, message=''):
-    # scores = np.unique(Xpf)
-    # if len(scores) > 2: binarize = True
-
-    # pref_threshold = p_th
-    # if binarize: 
-    #     if p_th < 0: print('(ratio_of_alignment) Warning: Attempting to binarize preference scores without a threshold (will use the grand mean as the threshold) ...') 
-    #     # ... alternatively use calibrate_preference() to find the optimal threshold
-    #     Xpf = binarize_pref(Xpf, p_th=pref_threshold, cutoff=True)
-    # ... Xpf is a binary matrix
-    assert len(np.unique(Xpf)) <= 2, "Xpf has not been binarized (n(values): {})".format(len(np.unique(Xpf)))
-
-    ret = {}
-    p_agreed, p_correct_agreed  = ratio_of_alignment(Xpf, Mc)   # rc: overall considerig both 0 and 1, rc_correct: consider only correct predictions (i.e. TP & TN)
-    
-    predict_pos = (Lh == 1)  # Given BP's prediction Lh, select entries ~ target label
-    predict_neg = (Lh == 0)
-
-    # nct = np.sum( (Xpf == Mc) & predict_pos )  # preference matrix aligned with correctnes matrix AND entries matching target labels
-    # rtp = nct/(N+0.0) 
-
-    # A. active preference
-    cells_positive = cells_preferred = (Xpf == 1)
-    cells_negative = (Xpf == 0)
-
-    # cells_not_preferred = (Xpf == 0)
-    n_pref = np.sum(cells_preferred)
-    # n_not_pref = np.sum(cells_not_preferred)
-
-    cells_tp = (Mc == 1) & predict_pos
-    cells_tn = (Mc == 1) & predict_neg
-    cells_fp = (Mc == 0) & predict_pos
-    cells_fn = (Mc == 0) & predict_neg
-
-    # n_agreed_tp = np.sum( (Xpf == Mc) & cells_tp )  # agreed & tp
-    # n_agreed_fp = np.sum( (Xpf == Mc) & cells_fp )  # agreed & tn
-    
-    # cells_preferred_tp = cells_preferred & cells_tp
-    # cells_preferred_tn = cells_preferred & cells_tn
-
-    n_tp_hit = n_tp_pref = np.sum( cells_preferred & cells_tp ) # correctly aligned TPs
-    n_tn_hit = n_tn_pref = np.sum( cells_preferred & cells_tn )
-    p_tp_preferred = n_tp_pref/(n_pref+1e-3)  # P(tp|preferred): the fraction of TPs among those preferred entries
-    p_tn_preferred = n_tn_pref/(n_pref+1e-3)  # P(tn|preferred): the fraction of TNs among those preferred entries
-
-    n_fp_hit = n_fp_pref = np.sum( cells_preferred & cells_fp )
-    n_fn_hit = n_fn_pref = np.sum( cells_preferred & cells_fn )
-    p_fp_preferred = n_fp_pref/(n_pref+1e-3)
-    p_fn_preferred = n_fn_pref/(n_pref+1e-3)
-
-    ret['precision_pref'] = precision_pref = n_tp_pref/(n_tp_pref+n_fp_pref+1e-3)
-    ret['recall_pref'] = recall_pref = n_tp_pref/(n_tp_pref+n_fn_pref+1e-3)
-    ret['npv_pref'] = npv_pref = n_tn_pref/(n_tn_pref+n_fn_pref+1e-3)
-    ret['specificity_pref'] = specificity_pref = n_tn_pref/(n_tn_pref+n_fp_pref+1e-3)
-
-    # B. aligned
-    aligned = (Xpf == Mc)
-    n_aligned = np.sum(aligned)
-    n_aligned_tp = np.sum(aligned & cells_tp)
-    n_aligned_tn = np.sum(aligned & cells_tn)
-    n_aligned_fp = np.sum(aligned & cells_fp)
-    n_aligned_fn = np.sum(aligned & cells_fn)
-
-    precision_aligned = n_aligned_tp/(n_aligned_tp+n_aligned_fp+1e-3)
-    recall_aligned = n_aligned_tp/(n_aligned_tp+n_aligned_fn+1e-3)
-
-    # C. missed 
-    missed = not_pref = (Xpf == 0)
-    n_tp_missed = np.sum(missed & cells_tp)   # want small
-    n_tn_missed = np.sum(missed & cells_tn)   # want small but don't care as much
-    n_fp_missed = np.sum(missed & cells_fp)   # want large
-    n_fn_missed = np.sum(missed & cells_fn)
-
-    # if polarity = 1 corresponds to tp or tn, then it's a TP for polarity
-    n_tp_polarity = np.sum( cells_positive & (cells_tp | cells_tn) )
-    # if polarity = 1 ~              fp or fn, then it's a FP for polarity 
-    n_fp_polarity = np.sum( cells_positive & (cells_fp | cells_fn) )
-    # if polarity = 0 ~              fp or fn, then it's a TN for polarity 
-    n_tn_polarity = np.sum( cells_negative & (cells_fp | cells_fn) )
-    # if poarlity = 0 ~              tp or tn, then it's a FN for polarity
-    n_fn_polarity = np.sum( cells_negative & (cells_tp | cells_tn) )
-
-    ret['precision_polarity'] = n_tp_polarity/(n_tp_polarity+n_fp_polarity+1e-3)
-    ret['recall_polarity'] = n_tp_polarity/(n_tp_polarity+n_fn_polarity+1e-3)
-    ret['npv_polarity'] = n_tn_polarity/(n_tn_polarity+n_fn_polarity+1e-3)
-    ret['specificity_polarity'] = n_tn_polarity/(n_tn_polarity+n_fp_polarity+1e-3)
-    
-    if verbose: 
-        # if message: print(message)
-        msg = '' if not message else '(ratio_of_alignment2) -- {} --\n'.format(message)
-        msg += '(ratio_of_alignment2) P(TP|pref): {}, P(FP|pref): {}\n'.format(p_tp_preferred, p_fp_preferred)
-        msg += "...  precison(pref): {}, recall(pref): {} | npv(pref): {}, specificity(pref): {}\n".format(
-            precision_pref, recall_pref, npv_pref, specificity_pref)
-        msg += "...  p-precision: {}, p-recall: {}, p-npv: {}, p-specificity: {}\n".format(
-            ret['precision_polarity'], ret['recall_polarity'], ret['npv_polarity'], ret['specificity_polarity'])
-        # precision(aligned): {}, recall(aligned): {}
-        # precision_aligned, recall_aligned
-
-        msg += '... n_missed(TP): {}, n_missed(TN):  {}\n'.format(n_tp_missed, n_tn_missed)
-        msg += '... n_missed(FP): {}, n_missed(FN):  {}\n'.format(n_fp_missed, n_fn_missed)
-        msg += '... n_hit(TP):    {}, n_hit(TN):     {}\n'.format(n_tp_hit, n_tn_hit)
-        msg += '... n_hit(FP):    {}, n_hit(FN):     {}\n'.format(n_fp_hit, n_fn_hit)
-        msg += '==> n_hit(TP):    {}, n_missed(FP):  {} -> Large?\n'.format(n_tp_hit, n_fp_missed)
-        msg += '==> n_hit(FP):    {}, n_missed(TP):  {} -> Small?\n'.format(n_fp_hit, n_tp_missed)
-        # msg += '... n_aligned(TP) {}, n_aligned(TN): {}\n'.format(n_aligned_tp, n_aligned_tn)
-        # msg += '... n_aligned(FP) {}, n_aligned(FN): {}\n'.format(n_aligned_fp, n_aligned_fn)
-        msg += '... n_pref:       {}, n_aligned:     {}\n'.format(n_pref, n_aligned)   # n_aligned >? n_pref
-        msg += '-' * 80; msg += '\n'
-        # msg += '... P(agreed): {}, P(correct|agreed): {}\n'.format(p_agreed, p_correct_agreed)
-        # msg += '... P(TN|pref):{}, P(FN|pref): {}\n'.format(p_tn_preferred, p_fn_preferred)
-
-        # fraction of entries corresponding to preferred ...
-        n_zeros, n_ones = np.sum(Xpf==0), np.sum(Xpf==1)
-        n_incorrect, n_correct = np.sum(Mc==0), np.sum(Mc==1)
-        N = Xpf.shape[0] * Xpf.shape[1] + 0.0
-        msg += '-' * 80; msg += '\n'
-        msg += '... number of 0s and 1s | n(zeros):     {} (r={}) vs n(ones):    {} (r={})\n'.format(n_zeros, n_zeros/N, n_ones, n_ones/N)
-        msg += '... number of (+)s, (-)s| n(incorrect): {} (r={}) vs n(correct): {} (r={})\n'.format(n_incorrect, n_incorrect/(n_incorrect+n_correct+0.0), n_correct, n_correct/(n_correct+n_incorrect+0.0) )
-        print(msg)
-
-    return ret
+    return pmodel.ratio_of_alignment2(Xpf, Mc, Lh, verify=verify, verbose=verbose, message=message)
 
 def ratio_of_alignment(Xpf, Mc, verify=True, target_label=None):
-    # scores = np.unique(Xpf)
-    # if len(scores) > 2: binarize = True
-
-    # if binarize: 
-    #     if p_th < 0: print('(ratio_of_alignment) Warning: Attempting to binarize preference scores without a threshold (will use the grand mean as the threshold) ...') 
-    #     Xpf = binarize_pref(Xpf, p_th=p_th, cutoff=True)
-    assert len(np.unique(Xpf)) <= 2, "Xpf has not been binarized (n(values): {})".format(len(np.unique(Xpf)))
-    # ... Xpf is a binary matrix
-
-    N = Xpf.shape[0] * Xpf.shape[1] # np.sum(Mc) # total correct predictions
-
-    n_aligned = np.sum(Xpf == Mc)
-    p_aligned = n_aligned/(N+0.0)  # the fraction of the entries for which preference matrix is aligned with the correct entries
-    # ... hope: preferred is also correct
-
-    # only consider correct entries 
-    # Nc = np.sum(Mc == 1)
-    n_correct_aligned = np.sum( (Mc == 1) & (Xpf == Mc) ) 
-    p_correct_aligned = n_correct_aligned/(n_aligned+0.0)
-    # ... assuming that Mc is computed from true labels
-
-    # to focus on only positive examples or negative examples, we need the label matrix Lh
-    # ... see ratio_of_alignment2()
-
-    return p_aligned, p_correct_aligned  # rc: overall considerig both 0 and 1, rc_correct: consider only correct predictions (i.e. TP & TN)
+    
+    return pmodel.ratio_of_alignment(Xpf, Mc, verify=verify, target_label=target_label) 
+    # rc: overall considerig both 0 and 1, rc_correct: consider only correct predictions (i.e. TP & TN)
 
 def eval_alignment_by_precision(Xpf, Mc, Lh, by='alignment'):
     """
@@ -5388,74 +5247,10 @@ def eval_alignment_by_precision(Xpf, Mc, Lh, by='alignment'):
 
         'precision': TP/(TP+FP) computed from preferred entries (Xpf == 1)
     """
-    predict_pos = (Lh == 1)  # Given BP's prediction Lh, select entries ~ target label
-    predict_neg = (Lh == 0)
-
-    cells_tp = (Mc == 1) & predict_pos
-    # cells_tn = (Mc == 1) & predict_neg
-    cells_fp = (Mc == 0) & predict_pos
-    # cells_fn = (Mc == 0) & predict_neg
-
-    precision = 0.0
-    if by == 'alignment':
-        aligned = (Xpf == Mc)
-        # n_aligned = np.sum(aligned)  # computed in ratio_of_alignment2()
-
-        n_aligned_tp = np.sum(aligned & cells_tp)
-        n_aligned_fp = np.sum(aligned & cells_fp)
-        # n_aligned_fn = np.sum(aligned & cells_fn)
-
-        precision= n_aligned_tp/(n_aligned_tp+n_aligned_fp+0.0)
-        # recall_aligned = n_aligned_tp/(n_aligned_tp+n_aligned_fn+0.0)
-    elif by == 'preference': 
-        preferred = (Xpf == 1)
-        # n_pref = np.sum(preferred)
-
-        n_pref_tp = np.sum( preferred & cells_tp ) # correctly aligned TPs
-        # n_pref_tn = np.sum( preferred & cells_tn )
-        
-        n_pref_fp = np.sum( preferred & cells_fp )
-        # n_pref_fn = np.sum( preferred & cells_fn ) 
-        precision = n_pref_fp/(n_pref_tp+n_pref_fp+0.0)
-    else: 
-        raise NotImplementedError
-
-    return precision
+    return pmodel.eval_alignment_by_precision(Xpf, Mc, Lh, by=by)
 
 def eval_alignment_by_recall(Xpf, Mc, Lh, by='alignment'): 
-    predict_pos = (Lh == 1)  # Given BP's prediction Lh, select entries ~ target label
-    predict_neg = (Lh == 0)
-
-    cells_tp = (Mc == 1) & predict_pos
-    # cells_tn = (Mc == 1) & predict_neg
-    # cells_fp = (Mc == 0) & predict_pos
-    cells_fn = (Mc == 0) & predict_neg
-
-    recall = 0.0 
-    if by == 'alignment':
-        aligned = (Xpf == Mc)
-        # n_aligned = np.sum(aligned)  # computed in ratio_of_alignment2()
-
-        n_aligned_tp = np.sum(aligned & cells_tp)
-        # n_aligned_fp = np.sum(aligned & cells_fp)
-        n_aligned_fn = np.sum(aligned & cells_fn)
-
-        # precision= n_aligned_tp/(n_aligned_tp+n_aligned_fp+0.0)
-        recall = n_aligned_tp/(n_aligned_tp+n_aligned_fn+0.0)
-    elif by == 'preference': 
-        preferred = (Xpf == 1)
-        # n_pref = np.sum(cells_preferred)
-        n_tp_pref = np.sum( preferred & cells_tp ) # correctly aligned TPs
-        # n_tn_pref = np.sum( cells_preferred & cells_tn )
-
-        # n_fp_pref = np.sum( cells_preferred & cells_fp )
-        n_fn_pref = np.sum( preferred & cells_fn )
-
-        recall = n_tp_pref/(n_tp_pref+n_fn_pref+0.0)
-    else: 
-        raise NotImplementedError
-
-    return recall
+    return pmodel.eval_alignment_by_recall(Xpf, Mc, Lh, by=by)
 
 # def eval_alignment_by_fscore(): 
 def eval_alignment_by_fbeta(Xpf, Mc, Lh, by='preference', beta=1.0): 
@@ -5469,110 +5264,10 @@ def eval_alignment_by_fbeta(Xpf, Mc, Lh, by='preference', beta=1.0):
     beta < 1 lends more weight to precision, while beta > 1 favors recall 
     (beta -> 0 considers only precision, beta -> inf only recall)
     """
-    predict_pos = (Lh == 1)  # Given BP's prediction Lh, select entries ~ target label
-    predict_neg = (Lh == 0)
-
-    # Need to consider the fact that Mc is derived from estimated labels (e.g. majority vote)
-    cells_tp = (Mc == 1) & predict_pos
-    cells_tn = (Mc == 1) & predict_neg
-    cells_fp = (Mc == 0) & predict_pos   # want small
-    cells_fn = (Mc == 0) & predict_neg   # want small
-
-    precision = recall = 0.5
-    f_beta = f_beta_bar = 0.5
-    if by == 'alignment': 
-        raise ValueError
-
-    elif by == 'preference': 
-
-        cells_positive = preferred = (Xpf == 1)
-        cells_negative = preferred = (Xpf == 0)
-
-        ret = {}
-
-        # n_tp_hit = n_tp_pref = np.sum( cells_positive & cells_tp ) # correctly aligned TPs
-        # n_tn_hit = n_tn_pref = np.sum( cells_positive & cells_tn )
-        # n_fp_hit = n_fp_pref = np.sum( cells_positive & cells_fp )
-        # n_fn_hit = n_fn_pref = np.sum( cells_positive & cells_fn )
-
-        # ret['precision_pref'] = precision_pref = n_tp_pref/(n_tp_pref+n_fp_pref+1e-3)
-        # ret['recall_pref'] = recall_pref = n_tp_pref/(n_tp_pref+n_fn_pref+1e-3)
-        # ret['npv_pref'] = npv_pref = n_tn_pref/(n_tn_pref+n_fn_pref+1e-3)
-        # ret['specificity_pref'] = specificity_pref = n_tn_pref/(n_tn_pref+n_fp_pref+1e-3)
-
-        # combined measure 
-        # n_hit = n_tp_hit + n_tn_hit
-        # n_miss = n_fp_hit + n_fn_hit
-        # accuracy = n_hit/(n_hit+n_miss)
-
-        # if polarity = 1 corresponds to tp or tn, then it's a TP for polarity
-        n_tp_polarity = np.sum( cells_positive & (cells_tp | cells_tn) )
-        # if polarity = 1 ~              fp or fn, then it's a FP for polarity 
-        n_fp_polarity = np.sum( cells_positive & (cells_fp | cells_fn) )
-        # if polarity = 0 ~              fp or fn, then it's a TN for polarity 
-        n_tn_polarity = np.sum( cells_negative & (cells_fp | cells_fn) )
-        # if poarlity = 0 ~              tp or tn, then it's a FN for polarity
-        n_fn_polarity = np.sum( cells_negative & (cells_tp | cells_tn) )
-
-        ret['precision_polarity'] = n_tp_polarity/(n_tp_polarity+n_fp_polarity+1e-3)
-        ret['recall_polarity'] = n_tp_polarity/(n_tp_polarity+n_fn_polarity+1e-3)
-        ret['npv_polarity'] = n_tn_polarity/(n_tn_polarity+n_fn_polarity+1e-3)
-        ret['specificity_polarity'] = n_tn_polarity/(n_tn_polarity+n_fp_polarity+1e-3)
-
-        ########################################################
-        precision = n_tp_polarity/(n_tp_polarity+n_fp_polarity+1e-3)
-        recall = n_tp_polarity/(n_tp_polarity+n_fn_polarity+1e-3)
-        ########################################################
-
-        # n_tp_not_pref = np.sum( not_preferred & cells_tp ) # correctly aligned TPs
-        # n_fp_not_pref = np.sum( not_preferred & cells_fp )
-        # n_fn_not_pref = np.sum( not_preferred & cells_fn )
-
-        # precision_bar = n_tp_not_pref/(n_tp_not_pref+n_fp_not_pref+1e-3)
-        # recall_bar = n_tp_not_pref/(n_tp_not_pref+n_fn_not_pref+1e-3)
-
-    else: 
-        raise NotImplementedError
-    
-    # polarity (+): aligned or preferred
-    f_beta = (1 + beta**2) * (precision * recall) / ((beta**2 * precision) + recall)
-
-    # polarity (-): 
-    # f_beta_bar = (1 + beta**2) * (precision_bar * recall_bar) / ((beta**2 * precision_bar) + recall_bar)
-    # f1: beta -> 1 
-    # if beta -> 0, f_bete -> precision
-    # if beta -> inf, f_beta -> recall
-   
-    return f_beta # f_beta/(f_beta_bar+1.0)
+    return pmodel.eval_alignment_by_fbeta(Xpf, Mc, Lh, by=by, beta=beta) # f_beta/(f_beta_bar+1.0)
 
 def eval_alignment_minimize_fpfn(Xpf, Mc, Lh):
-    predict_pos = (Lh == 1)  # Given BP's prediction Lh, select entries ~ target label
-    predict_neg = (Lh == 0)
-
-    ########################################
-    cells_tp = (Mc == 1) & predict_pos
-    # cells_tn = (Mc == 1) & predict_neg
-    cells_fp = (Mc == 0) & predict_pos   # want small
-    cells_fn = (Mc == 0) & predict_neg   # want small
-    ########################################
-    # ... estimated quantities due to Mc being estimated
-
-    preferred = (Xpf == 1)
-    # n_pref = np.sum(preferred)
-
-    n_tp_pref = np.sum( preferred & cells_tp ) # correctly aligned TPs
-    # n_tn_pref = np.sum( cells_preferred & cells_tn )
-
-    n_fp_pref = np.sum( preferred & cells_fp )
-    n_fn_pref = np.sum( preferred & cells_fn )
-
-    nf = n_fp_pref + n_fn_pref
-    # precision = n_tp_pref/(n_tp_pref+n_fp_pref+0.0)
-    # recall = n_tp_pref/(n_tp_pref+n_fn_pref+0.0)
-
-    # return -(n_fp_pref+n_fn_pref)   # '-' because we want n_f* to be as small as possible
-    score = 0 if nf == 0 else np.log(1./nf) 
-    return score
+    return pmodel.eval_alignment_minimize_fpfn(Xpf, Mc, Lh)
 
 def eval_alignment_hit_to_miss_ratio2(Xpf, Mc, Lh, error_avoidance=False): 
     """
@@ -5584,117 +5279,21 @@ def eval_alignment_hit_to_miss_ratio2(Xpf, Mc, Lh, error_avoidance=False):
         ==> n_hit(TP): 1101, n_missed(FP): 6885 → Large?
         ==> n_hit(FP): 3880, n_missed(TP): 511 → Small?
     """
-
-    predict_pos = (Lh == 1)  # Given BP's prediction Lh, select entries ~ target label
-    # predict_neg = (Lh == 0)
-
-    cells_tp = (Mc == 1) & predict_pos   # estimated
-    # cells_tn = (Mc == 1) & predict_neg
-    cells_fp = (Mc == 0) & predict_pos
-    # cells_fn = (Mc == 0) & predict_neg
-
-    pref = (Xpf == 1)
-    n_tp_hit = np.sum( pref & cells_tp ) # correctly aligned TPs, want high
-    n_fp_hit = np.sum( pref & cells_fp ) # want small
-    # n_tn_hit = n_tn_pref = np.sum( cells_preferred & cells_tn )
-
-    pref_bar = (Xpf == 0)
-    n_tp_missed = np.sum(pref_bar & cells_tp)  # want small 
-    n_fp_missed = np.sum(pref_bar & cells_fp)  # want high
-
-    if error_avoidance: 
-        # only consider FP statistics (in a larger-is-better fashion)
-        return np.log((n_fp_missed+1.0)/(n_fp_hit+1.0))
-   
-    # want stats(FP) to be small
-    # fp_stats = np.log( (n_fp_hit+1.0)/(n_fp_missed+1.0) )  # lower n_hit(fp) but higher n_missed(fp)
-
-    # want stats(TP) to be large
-    # tp_stats = np.log( (n_tp_hit+1.0)/(n_tp_missed+1.0) )  # higher n_hit(tp) but lower n_missed(tp)
-    return  np.log( (n_tp_hit * n_fp_missed + 1.0) / (n_tp_missed * n_fp_hit + 1.0 ) )
+    return pmodel.eval_alignment_hit_to_miss_ratio2(Xpf, Mc, Lh, error_avoidance=error_avoidance)
 
 def eval_alignment_hit_to_miss_ratio(Xpf, Mc, Lh, conditioned=True):
-    predict_pos = (Lh == 1)  # Given BP's prediction Lh, select entries ~ target label
-    # predict_neg = (Lh == 0)
-
-    cells_tp = (Mc == 1) & predict_pos   # estimated
-    # cells_tn = (Mc == 1) & predict_neg
-    cells_fp = (Mc == 0) & predict_pos
-    # cells_fn = (Mc == 0) & predict_neg
-
-    pref = (Xpf == 1)
-    n_tp_hit = np.sum( pref & cells_tp ) # correctly aligned TPs, want high
-    n_fp_hit = np.sum( pref & cells_fp ) # want small
-    # n_tn_hit = n_tn_pref = np.sum( cells_preferred & cells_tn )
-
-    pref_bar = (Xpf == 0)
-    n_tp_missed = np.sum(pref_bar & cells_tp)  # want small 
-    n_fp_missed = np.sum(pref_bar & cells_fp)  # want high
-
-    if conditioned: 
-        n_pref = np.sum(Xpf == 1)
-        n_pref_bar = np.sum(Xpf == 0)
-        if n_pref >= n_pref_bar: 
-            # focus on reducing false preference => increasing true non-preference
-            return np.log( (n_fp_missed+1.0)/(n_tp_missed+1.0))
-        else: # n_pref < n_pref_bar    n(1s) < n(0s)
-            # focus on reducing false non-preference => increasing true preference
-            return np.log( (n_tp_hit+1.0)/(n_fp_hit+1.0))
-        # ... thought: instead of adding 1, could also add a prior count estimated from the training split (R)
-        #              suppose that we also use the same method to 'estimate' training set's label 
-        #              (e.g. via majority vote), then the related counts can be used as priors
-
-    return np.log( (n_tp_hit+n_fp_missed+1.0)/(n_fp_hit+n_tp_missed+1.0) )  # ~ np.log(n_tp_hit * n_fp_missed)
-
-def eval_alignment_hit_to_miss_ratio0(Xpf, Mc, Lh):
-    """
-
-    Memo
-    ----
-    1. Tends to lead to very low pref threshold, not recommended
-    """
-    predict_pos = (Lh == 1)  # Given BP's prediction Lh, select entries ~ target label
-    # predict_neg = (Lh == 0)
-
-    cells_tp = (Mc == 1) & predict_pos
-    # cells_tn = (Mc == 1) & predict_neg
-    # cells_fp = (Mc == 0) & predict_pos
-    # cells_fn = (Mc == 0) & predict_neg
-
-    cells_preferred = (Xpf == 1)
-    n_tp_hit = np.sum( cells_preferred & cells_tp ) # correctly aligned TPs
-    # n_tn_hit = n_tn_pref = np.sum( cells_preferred & cells_tn )
-
-    not_pref = (Xpf == 0)
-    n_tp_missed = np.sum(not_pref & cells_tp) 
-    return n_tp_hit/(n_tp_missed+1.0)
+    return pmodel.eval_alignment_hit_to_miss_ratio(Xpf, Mc, Lh, conditioned=conditioned)  # ~ np.log(n_tp_hit * n_fp_missed)
 
 # def eval_alignment_true_positive(Xpf, Mc, Lh): 
 #     cells_tp = (Mc == 1) & (Lh == 1)  # but this is not necessarily good, because "true positive" is defined wrt estiamted labels (Lh)
 #     return np.sum( (Xpf == Mc) & cells_tp)
 def eval_alignment_positive(Xpf, Mc, Lh, verbose=False): 
     # Xpf: is a binary matrix
-
-    # objective: whenver predicting positive, want to be aligned with correctness  
-
-    n_aligned = np.sum(Xpf == Mc)    
-    n_aligned_positive = np.sum( n_aligned & (Lh == 1) )
-    # cells_tp = (Mc == 1) & (Lh == 1)  # but this is not necessarily good, because "true positive" is defined wrt estiamted labels (Lh)
-
-    return n_aligned_positive/n_aligned  # P(positive|aligned)
+    return pmodel.eval_alignment_positive(Xpf, Mc, Lh, verbose=verbose)  # P(positive|aligned)
 
 def eval_alignment(Xpf, Mc, Lh=None, conditioned=True): 
     # Xpf: is a binary matrix
-
-    aligned = (Xpf == Mc)
-    n_aligned = np.sum(aligned)
-
-    if conditioned:    
-        n_pref_aligned = np.sum( aligned & (Xpf == 1) ) 
-        return n_pref_aligned/(n_aligned+0.0)  # P(preferred | aligned)
-    
-    N = Xpf.shape[0] * Xpf.shape[1] + 0.0
-    return n_aligned/N
+    return pmodel.eval_alignment(Xpf, Mc, Lh=Lh, conditioned=conditioned)
 
 def estimate_pref_threshold(Th, T, L=[], p_threshold=[], ratio_small_class=0.1, 
         pos_label=1, step=0.01, min_score=0.0, max_score=1.0, message=''): 
@@ -6248,7 +5847,7 @@ def color_matrix(X, L, p_th, **kargs):
 
     """
     # Optional parameteres 
-    #    reduced_negative=False, 
+    #    reduced_negative=False, codes={},
     #    pos_label=1, neg_label=0
     return pmodel.color_matrix(X, L, p_th, **kargs) # return (Pc, Lh)
 
@@ -6314,23 +5913,9 @@ def predict_by_importance_weights(X, W, aggregate_func='mean', fallback_on_low_w
     return pv  
 
 # factor: utilities
-def softmax(X, axis=0): 
-    # if scipy.sparse.issparse(X): X = X.toarray()
-    # column-wise softmax
-    X = X.astype(float)
-    if X.ndim==1:
-        S=np.sum(np.exp(X))
-        return np.exp(X)/S
-    elif X.ndim==2:
-        Xw= np.zeros_like(X)
-        m,n = X.shape
-        for j in range(n):
-            S=np.sum(np.exp(X[:,j])) # column sum-of-exp
-            Xw[:,j]=np.exp(X[:,j])/S
-        return Xw
-    else:
-        print("The input array is not 1- or 2-dimensional.")
-    return X
+def softmax(x, axis=0):
+    e_x = np.exp(x - np.max(x))
+    return e_x / e_x.sum(axis=axis)
 
 def predict_by_preference(X, Xpf, L=[], W=None, name='Xh', aggregate_func='mean', 
         fallback_on_low_weight=False, min_weight=0.01, verify=True): 
