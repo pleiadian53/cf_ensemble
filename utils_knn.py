@@ -9,6 +9,69 @@ import numpy as np
 from sklearn.preprocessing import normalize
 
 
+from utilities import normalize
+import scipy.sparse as sparse
+# from sklearn.preprocessing import normalize
+
+class FaissKNN:
+    def __init__(self, k=5, normalize=False):
+        self.index = None
+        self.y = None
+        self.y_tag = None # other meta data for the label/target such as polarities, colors
+        self.k = k
+        self.normalize_input = normalize
+
+    def fit(self, X, y):
+        self.index = faiss.IndexFlatL2(X.shape[1]) # Each x in X is in row-vector format i.e. X has shape  (n_instances, n_dim)
+        # Note: Rating matrix (X), however, is in column-vector format; therefore, we need to remember to take transpose before using it as an input
+  
+        if self.normalize_input: 
+            X = normalize(X, axis=1) # X is in row-vector format
+
+        self.index.add(X.astype(np.float32))
+        self.y = y
+
+    def predict(self, X):
+        distances, indices = self.index.search(X.astype(np.float32), k=self.k)
+        # shape(distances): (n_instances, k)
+        # shape(indices):   (n_instances, k)
+
+        votes = self.y[indices] # note: shape(votes)=shape(indices)
+        predictions = np.array([np.argmax(np.bincount(x)) for x in votes])
+        # np.bincount([1, 1, 1, 0, 1, 0, 0, 0, 1, 1]) 
+        # ~> array([4, 6]) because index 0 occurs 4 times, and 1 occurs 6 times
+        return predictions
+    def search(self, X): 
+        distances, indices = self.index.search(X.astype(np.float32), k=self.k)
+        return distances, indices
+
+
+# Count-based methods 
+################################################################
+def most_common_element_and_position(x):
+    u = np.unique(x) # `x` can be negative (which cannot be handled by bincount)
+    umap = dict(zip(u, range(len(u))))
+    umap_inv = dict(zip(range(len(u)), u))
+
+    # most common element
+    elem = umap_inv[np.argmax(np.bincount([umap[e] for e in x]))] 
+
+    # position
+    pos = np.argmax(np.array(x)==elem)
+    return elem, pos
+def most_common_element(x): 
+    u = np.unique(x) # `x` can be negative (which cannot be handled by bincount)
+    umap = dict(zip(u, range(len(u))))
+    umap_inv = dict(zip(range(len(u)), u))
+
+    # most common element
+    elem = umap_inv[np.argmax(np.bincount([umap[e] for e in x]))] 
+    return elem  
+    
+
+# Similarity measure-related utilities
+################################################################
+
 def pairwise_similarity0(ratings, kind='user'):
     """
     Slow version of pairwise_similarity() without vectorization. 
@@ -361,8 +424,18 @@ def eval_similarity_by_latent_factors(A, epsilon=1e-9):
 
     return np.dot(A, A.T)
 
+def demo_basics(): 
+
+    x = [-1, 1, -2, 3, -2, 10, 3, -1, 2, -2, 3, -2, -2, 4, -5, 3, 1, -2, 7, -5, -5, -5, 7, -5, -5]
+    x_freq, x_pos = most_common_element_and_position(x)
+    print(f"> x:\n{x}\n")
+    print(f"> freq(x): {x_freq}, pos_freq(x): {x_pos}")
+
 
 def test(): 
+
+    # Basic utilities 
+    demo_basics()
 
     return
 

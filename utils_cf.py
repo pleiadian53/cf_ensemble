@@ -2163,7 +2163,7 @@ def evalConfidenceMatrix(X, L=[], **kargs):
                 'suppress_negative_examples': kargs.get('suppress_negative_examples', False),
                 # 'mask_all_test': kargs.get('mask_all_test', True)
 
-                'is_cascade': kargs.get('is_cascade', True), # if True, X is a concatenation of R and T
+                'is_cascade': kargs.get('is_cascade', False), # if True, X is a concatenation of R and T
 
                 ##########
                 # options: {'user', 'item', 'polarity'} but 'user' is not favorable
@@ -2289,7 +2289,7 @@ def evalConfidenceMatrices(X, L, alpha=10.0, p_threshold=[], conf_measure='brier
     n_train = kargs.get('n_train', -1) # used to separate X into R and T, from which to estimate `p_threshold`
     verbose = kargs.get('verbose', 0)
     U = kargs.get("U", []) # the set of users/classifiers; for debug/test only
-    is_cascade = kargs.get('is_cascade', True) # True of X contains both R and T; false otherwise
+    is_cascade = kargs.get('is_cascade', False) # True of X contains both R and T; false otherwise
     ##################################################
 
     CX = evalConfidenceMatrix(X, L=L, U=U, 
@@ -4001,7 +4001,7 @@ def toConfidenceMatrix(X, L, **kargs):
     fold = kargs.get('fold', -1)  # only used for debugging
     n_train = kargs.get('n_train', -1) # Only used to separate L into L_train and "lh" (est labels), from which to estimate p_threshold
     U = users = kargs.get('U', []) # names of users/classifiers
-    is_cascade = kargs.get('is_cascade', False) # [note] cascade mode seems more favorable (i.e. X=[R|T])
+    is_cascade = kargs.get('is_cascade', False) # NOTE: This var becomes irrelevant when both `L` and `p_threshold` are available
     verbose = kargs.get('verbose', 1)
     alpha = kargs.get('alpha', 10) # see `balance_and_scale()`
 
@@ -4019,7 +4019,7 @@ def toConfidenceMatrix(X, L, **kargs):
     #####################################################################################
     # "Message passing": Pass training set information useful for determining T's probaility filter (assuming that X contains only the test set data i.e. T)
     tHasMessageFromTrainingSplit = False
-    R = T = L_train = L_test_est = None
+    R = L_train = T = L_test_est = None
     Eu = [] # effective classifiers
     M = kargs.get('message', None)
     if M is not None: 
@@ -4055,6 +4055,9 @@ def toConfidenceMatrix(X, L, **kargs):
                 R, T = X[:,:n_train], X[:,n_train:]
                 L_train, L_test_est = L[:n_train], L[n_train: ] # note that `L_test_est` is only a guess since we do not know test set's true labels
                 hasSplit = True
+    else: 
+        R = X
+        L_train = L
 
     # [design] Always pre-compute probability thresholds so that this block can be skipped
     #####################################################################################
@@ -5802,7 +5805,7 @@ def estimate_polarity_stacker2(R, Lr, p_th, T, **kargs):
     #    k_upper=-1, k_lower=-1, k_max=-1, k_min=1, verbose=True, pos_label=1, neg_label=0 
     return pmodel.estimate_polarity_stacker2(R, Lr, p_th, T, **kargs)
 
-def probability_filter(X, L, p_th, *, target_label=None): 
+def probability_filter(X, L, p_th, target_label=None): 
     """
     Compute a binary matrix in which 1 represents a correct prediction (i.e. TP or TN), 
     and 0 represents a false prediction (i.e. FP or FN). Predicted labels (Lh) are determined by the given probability threshold (p_th). 
@@ -5819,14 +5822,8 @@ def probability_filter(X, L, p_th, *, target_label=None):
         first matrix is a probability filter comprising 0s and 1s (1 for TPs and TNs and 0 for FPs and FNs)
         second matrix is an estimated label matrix given proba thresholds
     """
-    Lh = estimateLabelMatrix(X, p_th=p_th) # this is a label matrix NOT an estimate for true labels (lh); no 'majority vote' involved
-    
-    if target_label is not None: 
-        Pf = ((Lh == L[None, :]) & (Lh == target_label)).astype(int)
-    else: 
-        Pf = (Lh == L[None, :]).astype(int)
-
-    return (Pf, Lh)
+    # return value (Pf, Lh)
+    return pmodel.probability_filter(X=X, L=L, p_th=p_th, target_label=target_label)
 def preference_matrix(X, L, p_th, **kargs):
     return probability_filter(X, L, p_th, **kargs) 
 def correctness_matrix(X, L, p_th, **kargs):

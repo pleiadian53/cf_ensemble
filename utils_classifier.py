@@ -12,7 +12,7 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.neighbors import KernelDensity
 
 from sklearn.model_selection import RepeatedStratifiedKFold
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_val_score, train_test_split
 from sklearn.model_selection import RandomizedSearchCV, GridSearchCV
 
 from sklearn.metrics import accuracy_score, confusion_matrix, precision_score, recall_score, roc_auc_score, roc_curve, f1_score
@@ -183,10 +183,11 @@ def validate_crf_params(rs, output_path=None, dpi=300, save=True, verbose=True):
             pass
     return
 
+###############################################################################################
 # Model selection utilities 
 ###############################################################################################
 
-def get_tuned_classifier(model, grid, n_splits=5, n_repeats=3, random_state=53, scoring='f1', verbose=0): 
+def tune_model(model, grid, cv=None, **kargs): 
     """
 
     Parameters 
@@ -194,10 +195,19 @@ def get_tuned_classifier(model, grid, n_splits=5, n_repeats=3, random_state=53, 
     model: a classifier to tune for its best hyperparameter settings
     grid: a parameter dictionary
     """ 
+    scoring = kargs.get('scoring', 'f1') # Evaluation metric
+    verbose = kargs.get('verbose', 1)
+
     def fit_on_data(X, y): 
-        cv = RepeatedStratifiedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=random_state)
+        nonlocal cv 
+        if cv is None: 
+            random_state = kargs.get('random_state', 53)
+            n_splits = kargs.get('n_splits', 5)
+            n_repeats = kargs.get('n_repeats', 3)
+            cv = RepeatedStratifiedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=random_state)
+        
         grid_search = GridSearchCV(estimator=model, param_grid=grid, n_jobs=-1, cv=cv, scoring=scoring, error_score=0)
-        grid_result = grid_search.fit(X, y)
+        model_tuned = grid_result = grid_search.fit(X, y)
         
         # summarize results
         if verbose: 
@@ -207,13 +217,12 @@ def get_tuned_classifier(model, grid, n_splits=5, n_repeats=3, random_state=53, 
             params = grid_result.cv_results_['params']
             for mean, stdev, param in zip(means, stds, params):
                 print("%f (%f) with: %r" % (mean, stdev, param))
-
-        return grid_result # make predictions: call .predict(X_test) or grid_result.best_estimator_.predict(X_test)
+        
+        return model_tuned # to make predictions: call .predict(X_test) or grid_result.best_estimator_.predict(X_test)
     return fit_on_data
 
-
 # Dfine grid search
-def demo_hyperparameter_tuning(): 
+def demo_logistic_regression_tuning(): 
     """
 
     Reference 
@@ -227,15 +236,19 @@ def demo_hyperparameter_tuning():
     from sklearn.model_selection import RepeatedStratifiedKFold
     from sklearn.model_selection import GridSearchCV
     from sklearn.linear_model import LogisticRegression
+    
     # define dataset
     X, y = make_blobs(n_samples=1000, centers=2, n_features=100, cluster_std=20)
+    
     # define models and parameters
+    #################################
     model = LogisticRegression()
     solvers = ['newton-cg', 'lbfgs', 'liblinear']
     penalty = ['l2']
     c_values = [100, 10, 1.0, 0.1, 0.01]
-
     grid = dict(solver=solvers,penalty=penalty,C=c_values)
+    #################################
+
     cv = RepeatedStratifiedKFold(n_splits=10, n_repeats=3, random_state=1)
     grid_search = GridSearchCV(estimator=model, param_grid=grid, n_jobs=-1, cv=cv, scoring='accuracy',error_score=0)
     grid_result = grid_search.fit(X, y)
@@ -249,7 +262,77 @@ def demo_hyperparameter_tuning():
 
     return grid_result
 
+def demo_knn_tuning(): 
+    # example of grid searching key hyperparametres for KNeighborsClassifier
+    from sklearn.datasets import make_blobs
+    from sklearn.model_selection import RepeatedStratifiedKFold
+    from sklearn.model_selection import GridSearchCV
+    from sklearn.neighbors import KNeighborsClassifier
+    
+    # define dataset
+    X, y = make_blobs(n_samples=1000, centers=2, n_features=100, cluster_std=20)
 
+    # define models and parameters
+    model = KNeighborsClassifier()
+
+    # define grid search
+    #################################
+    n_neighbors = range(1, 21, 2)
+    weights = ['uniform', 'distance']
+    metric = ['euclidean', 'manhattan', 'minkowski']
+    grid = dict(n_neighbors=n_neighbors,weights=weights,metric=metric)
+    #################################
+    
+    cv = RepeatedStratifiedKFold(n_splits=10, n_repeats=3, random_state=1)
+    grid_search = GridSearchCV(estimator=model, param_grid=grid, n_jobs=-1, cv=cv, scoring='accuracy',error_score=0)
+    grid_result = grid_search.fit(X, y)
+    
+    # summarize results
+    print("Best: %f using %s" % (grid_result.best_score_, grid_result.best_params_))
+    means = grid_result.cv_results_['mean_test_score']
+    stds = grid_result.cv_results_['std_test_score']
+    params = grid_result.cv_results_['params']
+    for mean, stdev, param in zip(means, stds, params):
+        print("%f (%f) with: %r" % (mean, stdev, param))
+
+    return grid_result
+
+def demo_gradient_boosting(): 
+    # example of grid searching key hyperparameters for GradientBoostingClassifier
+    from sklearn.datasets import make_blobs
+    from sklearn.model_selection import RepeatedStratifiedKFold
+    from sklearn.model_selection import GridSearchCV
+    from sklearn.ensemble import GradientBoostingClassifier
+    
+    # define dataset
+    X, y = make_blobs(n_samples=1000, centers=2, n_features=100, cluster_std=20)
+    
+    # define models and parameters
+    model = GradientBoostingClassifier()
+
+    # define grid search
+    #################################
+    n_estimators = [10, 100, 1000]
+    learning_rate = [0.001, 0.01, 0.1]
+    subsample = [0.5, 0.7, 1.0]
+    max_depth = [3, 7, 9]
+    grid = dict(learning_rate=learning_rate, n_estimators=n_estimators, subsample=subsample, max_depth=max_depth)
+    #################################
+    
+    cv = RepeatedStratifiedKFold(n_splits=10, n_repeats=3, random_state=1)
+    grid_search = GridSearchCV(estimator=model, param_grid=grid, n_jobs=-1, cv=cv, scoring='accuracy',error_score=0)
+    grid_result = grid_search.fit(X, y)
+    # summarize results
+    print("Best: %f using %s" % (grid_result.best_score_, grid_result.best_params_))
+    means = grid_result.cv_results_['mean_test_score']
+    stds = grid_result.cv_results_['std_test_score']
+    params = grid_result.cv_results_['params']
+    for mean, stdev, param in zip(means, stds, params):
+        print("%f (%f) with: %r" % (mean, stdev, param))
+
+    return grid_result
+
+###############################################################################################
 # Performance evaluation utilities
 # 
 # Related Modules
@@ -519,7 +602,7 @@ def load_iris():
     X = np.c_[X, random_state.randn(n_samples, 200 * n_features)]
     return (X, y)
 
-def t_kde_classifier(): 
+def demo_kde_classifier(): 
     from sklearn.datasets import load_digits
     from sklearn.grid_search import GridSearchCV
 
@@ -540,7 +623,7 @@ def t_kde_classifier():
 
     return
 
-def test(**kargs): 
+def demo_mean_classifier(): 
     from sklearn.model_selection import train_test_split
 
     estimator = MeanClassifier()
@@ -555,6 +638,43 @@ def test(**kargs):
 
     y_score = estimator.predict_proba(X_test, y_test)
     print('> scores:       {0}'.format(y_score[:10]))
+
+    return
+
+def demo_model_selection(): 
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.metrics import f1_score
+
+    # Generate data
+    X, y = generate_gaussian_quantiles(n_samples=5000, verbose=0)
+
+    # Train-test split 
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=True, stratify=y)
+
+    # Define model
+    model = RandomForestClassifier()
+
+    n_estimators = [10, 100, 1000]
+    max_features = ['sqrt', 'log2']
+    grid = dict(n_estimators=n_estimators,max_features=max_features)
+
+    tuner = tune_model(model, grid, scoring='f1', verbose=1)
+    model_tuned = tuner(X_train, y_train)
+    y_pred = model_tuned.predict(X_test)
+    print(f"> shape(y_pred): {y_pred.shape}")
+
+    perf_score = f1_score(y_test, y_pred)
+    print(f'[result] F1 score:  {perf_score}')
+
+
+    return
+
+def test(**kargs): 
+    
+    # Model selection-related utilities
+    # demo_logistic_regression_tuning()
+
+    demo_model_selection()
 
     return
 

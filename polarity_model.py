@@ -109,11 +109,33 @@ def color_matrix(X, L, p_th, reduced_negative=False, codes={}, pos_label=1, neg_
         Pc[cells_fn] = codes['fn']
 
     return Pc, Lh
+def color_matrix_to_labels(Pc, codes={}, pos_label=1, neg_label=0): 
 
-def verify_colors(Pc, X=None):
+    P_is_sparse = False
+    if sparse.issparse(Pc): 
+        Pc = Pc.A
+        P_is_sparse = True
+    if len(codes)==0: codes = Polarity.codes
+    
+    n_users, n_items = Pc.shape 
+
+    L = []
+    for j in range(n_items): 
+        colors = set(Pc[:, j])
+        if (codes['tp'] in colors) or (codes['fn'] in colors): 
+            L.append(pos_label)
+        else: 
+            L.append(1-neg_label)
+
+    return np.array(L)
+
+def verify_colors(Pc, X=None, codes={}):
     # Foreach data point (column vector): 
     #    TP must pairs with FN (if any)
     #    TN must pairs with FP (if any)
+
+    if len(codes)==0: codes = Polarity.codes
+
     P_is_sparse = False
     if sparse.issparse(Pc): 
         Pc = Pc.A
@@ -121,19 +143,22 @@ def verify_colors(Pc, X=None):
     if X is not None: 
         assert Pc.shape == X.shape
 
+    n_users, n_items = Pc.shape
     max_colors = []
-    for j in range(Pc.shape[1]):
-        colors = set(np.unique(Pc[:, j]))
+    for j in range(n_items):
+        colors = np.unique(Pc[:, j])
         max_colors.append(max(colors)) # TP or TN exists? 
 
         nc = len(colors)
         assert nc <= 2, f"There can be at most 2 colors in one instance but got n={nc}"
         if nc == 2: 
-            if 2 in colors: 
-                assert -1 in colors, f"TP(2) can only pair with FN (-1) but got: {colors}"
-            elif 1 in colors: 
-                assert -2 in colors, f"TN(1) can only pair with FP (-2) but got: {colors}"
+            if codes['tp'] in colors: 
+                assert codes['fn'] in colors, f"TP(2) can only pair with FN (-1) but got: {colors}"
+            elif codes['tn'] in colors: 
+                assert codes['fp'] in colors, f"TN(1) can only pair with FP (-2) but got: {colors}"
             else: 
+                assert not (codes['fp'] in colors) or (codes['fn'] not in colors)
+                assert not (codes['fn'] in colors) or (codes['fp'] not in colors)
                 raise ValueError(f"Invalid color mixture: {colors} at position col={j}")
 
     # Convert back to sparse matrix format if necessary

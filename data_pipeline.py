@@ -3,6 +3,7 @@ import pandas as pd
 from pandas import DataFrame, Series
 
 import numpy as np
+import itertools
 from zipfile import ZipFile
 
 # Tensorflow
@@ -122,7 +123,8 @@ def matrix_to_decoded_dataframe(X, U=None, items=None, **kargs):
 def rating_matrix_to_decoded_dataframe(X, U=None, items=None, **kargs): 
     return matrix_to_decoded_dataframe(X, U=U, items=items, **kargs)
 
-def reestimate(model, X, n_train, **kargs):
+
+def reestimate(model, X, n_train=None, **kargs):
     """
     Use the (TF-trained) model to reconstruct the probaility rating matrix. 
 
@@ -132,88 +134,18 @@ def reestimate(model, X, n_train, **kargs):
     If, however, `n_train` is a number, then re-estimate only the test split of X 
     i.e. X[n_train: ] (typically denoted by `T`). 
     """
-    kargs['shuffle'] = False
-    kargs['normalize'] = False
+    import cf_models as cm
 
-    # Convert the rating matrix into (X, y)-format that the model accepts
-    R, T = X[:,:n_train], X[:,n_train:]
-    X_train, X_test, y_train, y_test = matrix_to_train_test_split(X, n_train, **kargs)
-
-    ####################################
-    y_train_pred = model.predict(X_train)
-    y_test_pred = model.predict(X_test)
-    ####################################
-
-    # Put the prediction back into the rating-matrix format
-    col_user = kargs.get('col_user', 'user')
-    col_item = kargs.get('col_item', 'item')
-    col_value = kargs.get('col_value', 'rating')
-    
-    df_train = DataFrame(X_train, columns=[col_user, col_item])
-    df_train[col_value] = y_train_pred
-    Rh = df_train.pivot(col_user, col_item, col_value).values
-    assert Rh.shape == R.shape
-
-    df_test = DataFrame(X_test, columns=[col_user, col_item])
-    df_test[col_value] = y_test_pred
-    Th = df_test.pivot(col_user, col_item, col_value).values
-    assert Th.shape == T.shape
-
-    return (Rh, Th)
+    # return value (Rh, Th), where `Rh` is the reestimated R and `Th` is the reestimated T
+    return cm.reestimate(model, X, n_train, **kargs)
 # [alias]
-def reconstruct(model, X, n_train, **kargs): 
+def reconstruct(model, X, n_train=None, **kargs): 
     return reestimate(model, X, n_train, **kargs)
 
-def reestimate_unreliable_only(model, X, n_train, Pc, C=None, **kargs):
-    L = kargs.pop('L', [])
-    p_threshold = kargs.pop('p_threshold', [])
-    use_confidence_weights = kargs.pop('use_confidence_weights', False) 
-    verbose = kargs.pop('verbose', 0)
+def reestimate_unreliable_only(model, X, *, Pc, C=None, n_train=None, **kargs):
+    import cf_models as cm
+    return cm.reestimate_unreliable_only(model, X, Pc=Pc, C=C, n_train=None, **kargs)
 
-    Rh, Th = reestimate(model, X, n_train, **kargs)
-    Xh = np.hstack((Rh, Th))
-    Xhi = interpolate(X, Xh, Pc, C=C, L=L, p_threshold=p_threshold, 
-              use_confidence_weights=use_confidence_weights, verbose=verbose)
-
-    return (Xhi[:,:n_train], Xhi[:,n_train:])
-
-def interpolate(X, Xh, Pc=None, C=None, L=[], p_threshold=[], use_confidence_weights=False, verbose=0): 
-    # from analyzer import is_sparse
-    import utils_cf as uc
-
-    # W = Pc
-    if use_confidence_weights: # Use confidence scores as weights 
-        assert C is not None
-        if is_sparse(C): C = C.toarray()
-        W = uc.softmax(C, axis=0)
-    else: 
-        if Pc is None: 
-            W, _ = uc.probability_filter(X, L, p_threshold)
-        else: 
-            W = Pc.A if is_sparse(Pc) else Pc
-            # Note: Why converting to dense? Subtracting a sparse matrix from a nonzero scalar is not supported 
-            #       E.g. can't do 1.0-W later if W is sparse
-
-            if verbose > 1: 
-                print('(reconstruct) Converting color matrix to a standard probability filter (aka preference matrix) ...')
-            W = uc.to_preference(W) # Note: this operation won't affect Pc
-
-    wmin, wmax = np.min(W), np.max(W)
-    assert wmin >= 0 and wmax <= 1, "W is not a probability filter | values: [{}, {}]".format(wmin, wmax)
-
-    # Note: 
-    # W as a weight matrix: the higher the W[i,j], the more weight on X[i,j]
-    # W as a preference matrix: W[i,j] = 1 => use X[i,j] (original value), if W[i,j] = 0, use Xh[i,j] (re-est value)
-
-    # Xh = uc.replace(P, Q, X=(W, X), canonicalize=True, 
-    #         fill=null_marker, predict_func=ua.predict_by_factors, name=name)
-
-    # uc.interpolate(X1, X2, W1, W2)
-    #   if W1[i,j]=1, then use X1[i, j]
-    #   if W1[i,j]=0 => W2[i,j]=1 => use X2[i,j]; effectively replacing X1[i,j] by X2[i, j]
-    Xh_partial = uc.interpolate(X, Xh, W, 1.0-W) # replace X by Xs selectively according to W (and 1-W)
-
-    return Xh_partial
 
 def matrix_to_train_test_split(X, n_train, **kargs):
     assert X.shape[1] >= n_train, f"Error: Sample size {X.shape[1]} while n_train={n_train}"
@@ -229,21 +161,21 @@ def matrix_to_train_test_split(X, n_train, **kargs):
     # min and max ratings will be used to normalize the ratings later (not necessary for probability scores)
     normalize = kargs.get('normalize', False)
     if normalize: 
-        y = df[col_value].apply(lambda x: (x - min_score) / (max_score - min_score)).values
-    else: 
-        y = df[col_value].values
+        df[col_value] = df[col_value].apply(lambda x: (x - min_score) / (max_score - min_score)).values
 
-    # Train-test spilt 
-    df_train = df.loc[df[col_item] < n_train]
+    # Train spilt 
+    df_train = df[df[col_item] < n_train]
     X_train = df_train[[col_user, col_item]] # `X_train` in user-item-index pair format 
-    y_train = y[:n_train] # ratings in the training split
+    y_train = df_train[col_value].values # ratings in the training split
 
-    df_test = df.loc[df[col_item] >= n_train] 
+    # Test split
+    df_test = df[df[col_item] >= n_train] 
     X_test = df_test[[col_user, col_item]] # `X_test` in user-item-index pair format
-    y_test = y[n_train:]
+    y_test = df_test[col_value].values
 
     assert X_train.shape[0] + X_test.shape[0] == X.size, \
             f"shape(X_train): {X_train.shape} and shape(X_test): {X_test.shape} not consistent with shape(X): {X.shape}"
+    assert (y_train.size == X_train.shape[0]) and (y_test.size == X_test.shape[0])
 
     return (X_train, X_test, y_train, y_test)
 #[alias]
@@ -312,7 +244,7 @@ def matrix_to_augmented_training_data2(R, C, Pc, **kargs):
 
         return (X[shuffler], np.column_stack([y[shuffler], weights[shuffler], colors[shuffler]]))
 
-    return (X, np.column_stack(y, weights, colors))
+    return (X, np.column_stack(y, weights, colors)) # (X, y_augmented)-format
 
 def matrix_to_augmented_training_data(R, C, Pc, **kargs):
     assert R.shape == C.shape
@@ -378,6 +310,40 @@ def unravel(R, **kargs):
     
     return y
 
+def zip_user_item_pairs(R, item_ids, user_ids=[], **kargs):
+
+    n_users, _ = R.shape 
+
+    if len(user_ids) == 0: user_ids = list(range(n_users))
+    assert len(item_ids) == len(user_ids)
+
+    col_user = kargs.get('col_user', 'user')
+    col_item = kargs.get('col_item', 'item')
+    col_value = kargs.get('col_value', 'rating')
+
+    return DataFrame(zip(user_ids, item_ids), columns=[col_user, col_item])
+
+def make_user_item_pairs(R, *, user_ids=[], item_ids=[], **kargs):
+    # import pandas as pd 
+
+    n_users, n_items = R.shape 
+
+    if len(user_ids) == 0: user_ids = list(range(n_users))
+    if len(item_ids) == 0: item_ids = list(range(n_items))    
+
+    col_user = kargs.get('col_user', 'user')
+    col_item = kargs.get('col_item', 'item')
+    col_value = kargs.get('col_value', 'rating')
+
+    # dfx = []
+    # for uid in user_ids: 
+    #     # IDs are structured in a way that reflects each user rating all the given items 
+    #     adict = {col_user: np.repeat(uid, len(item_ids)), col_item: item_ids}
+    #     dfi = DataFrame(adict, columns=[col_user, col_item])
+    #     dfx.append(dfi)
+    # df = pd.concat(dfx, ignore_index=True)
+    return DataFrame(itertools.product(user_ids, item_ids), columns=[col_user, col_item])
+
 def matrix_to_training_data(R, **kargs): 
     """
     Convert a rating matrix (R) into a training data set in the user-item-pair format. 
@@ -427,6 +393,12 @@ def matrix_to_dataframe(X, **kargs):
     ----------
     `X`: A rating matrix where rows represent users (base classifiers) and columns represent items (data points)
 
+    Output 
+    ------
+    A dataframe with three columns representing user, item and value; the value can be any numerical quantities 
+    that are domain-specific. We generally refer to it as a "rating" or a score. In ensemble learning, the value 
+    is the conditional probaiblity estimate P(y=1|x). 
+
     Memo
     ----
     1. df.stack(): https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.stack.html
@@ -441,10 +413,11 @@ def matrix_to_dataframe(X, **kargs):
 
     if is_sparse(X): X = X.A
 
-    # Structure training data in "user-item-value format" in which each training instance x
-    # is a user-item pair in their encoded indices, and the label y represents the rating 
-    # given by x (the user rating on a given item), which corresponds to classifier predicting 
-    # a data point in terms of P(y=1|x)
+    # Structure training data in "user-item-value format" as a dataframe with three columns representing 
+    # user, item and value. Specifically, each training instance `x` (in X) is represented by the first two columns, 
+    # user and item in their encoded indices; the 3rd column is the "value" associated with x, which corresponds 
+    # to the rating given by the user to an item. This is analogous to the classifier's prediction/rating 
+    # on a data point (as an item) in terms of the conditional probability P(y=1|x).
     df = DataFrame(X, index=user_ids, columns=item_ids)
     df = df.stack().reset_index().rename(columns={'level_0':col_user,'level_1':col_item, 0:col_value})
     df.astype({col_user: 'int32', col_item: 'int32', col_value:'float32'})
@@ -551,7 +524,21 @@ def generate_imbalanced_data(class_ratio=0.95, verbose=1):
     if verbose: print(f'> counts:\n{counter}\n') 
     return X, y
 
+def demo_data_processing():
+
+    X = np.random.choice(range(10), (5, 100))
+    n_train = 50
+    for n_train in [50, 100]: 
+        X_train, X_test, y_train, y_test = matrix_to_train_test_split(X, n_train=n_train)
+        # Expected: size(X_train) = 5 * 50 = 250, size(X_test) = 5 * 50 = 250
+        print(f"> n_train={n_train}")
+        print(f"> shape of X_train, y_train: {X_train.shape}, {y_train.shape}")
+        print(f"> shape of X_test, y_test:   {X_test.shape},  {y_test.shape}")
+
+    return
+
 def test(): 
+    demo_data_processing()
 
     return
 
