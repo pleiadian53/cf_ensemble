@@ -82,7 +82,41 @@ def most_common_element(x, pos_key_only=True):
                 elem = k
                 break
     return elem  
+
+# Error Analysis
+###############################################################
+
+def analyze_knn(fknn, T, L_test, Pc, target_label=1): 
+
+    distances, indices = fknn.search(T) # fknn must have been fit
+
+    target_examples = np.where(L_test == target_label)[0]
+    Nt = len(target_examples)
+    target_examples = np.random.choice(target_examples, min(Nt, 50))
+    if sparse.issparse(Pc): Pc = Pc.A
+
+    n_diff_knns = 0
+    n_users = Pc.shape[0]
+    ptype = 'Positive' if target_label == 1 else 'Negative'
+    for i, example in enumerate(target_examples): 
+        print(f"> {ptype} example #{i+1}")
+        knn_indices = indices[example]
+        Pc_i = Pc[:, knn_indices].astype(int)
+        print(f"> Pc_{i}:\n{Pc_i}")
+        
+        max_colors, max_indices = [], []
+        for u in range(n_users): 
+            color, pos = most_common_element_and_position(Pc_i[u, :], pos_key_only=True)
+            max_colors.append(color)
+            max_indices.append(knn_indices[pos]) # we want the knn index
+        if len(set(max_indices)) > 1: n_diff_knns += 1
+
+        print('> colors: ', max_colors)
+        print('> indices:', max_indices)
+        print('-' * 50)
+    print(f"[info] Found {n_diff_knns} cases for which the majority 'color' does not come from the same training instance")
     
+    return
 
 # Similarity measure-related utilities
 ################################################################

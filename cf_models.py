@@ -164,7 +164,7 @@ def predict_by_knn(model, model_knn, R, T, L_train, L_test, C, Pc, codes={}, pos
 
     if len(codes) == 0: codes = Polarity.codes
 
-    if is_sparse(Pc): Pc = Pc.A #
+    if sparse.issparse(Pc): Pc = Pc.A #
 
     # Infer true labels (L_train) from color matrix
     L_train = pmodel.color_matrix_to_labels(Pc, codes=codes) # True labels for R
@@ -411,8 +411,8 @@ def analyze_reestimated_matrices(train, test, meta):
     from scipy.spatial import distance
 
     # Original data
-    R, Rh, L_train = train.X, train.Xh, train.L
-    T, Th, L_test = test.X, test.Xh, test.L
+    R, Rh, L_train = train.X, train.Xh, train.L # [add] train.Pc
+    T, Th, L_test = test.X, test.Xh, test.L # [add] test.Pc
     policy_threshold = meta.policy_threshold
     conf_measure = meta.conf_measure
     alpha = meta.alpha
@@ -431,9 +431,13 @@ def analyze_reestimated_matrices(train, test, meta):
     print(f"...    Original p_threshold:\n{p_threshold}\n")
     print(f"...    New p_threshold:\n{p_threshold_new}\n")
 
+    # Evaluation
+    ###################################################
+
     # [todo] Try different strategies of reducing T to label predictions
     lh = uc.estimateLabels(T, L=[], p_th=p_threshold, pos_label=1) # "majority vote given proba thresholds" is the default strategy
     lh_new = uc.estimateLabels(Th, L=[], p_th=p_threshold_new, pos_label=1) # Use the re-estimated T to predict labels
+
     print(f"[info] How different are lh and lh_new? {distance.hamming(lh, lh_new)}")
 
     perf_score = f1_score(L_test, lh)
@@ -493,6 +497,7 @@ def analyze_reconstruction(model, X, L, Pc, n_train, p_threshold=[], policy_thre
 
         lh = uc.estimateLabels(T, L=[], p_th=p_threshold, pos_label=1) # "majority vote given proba thresholds" is the default strategy
         lh_new = uc.estimateLabels(Th, L=[], p_th=p_threshold_new, pos_label=1) # Use the re-estimated T to predict labels
+        # lh_new = uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T to predict labels
         print(f"[info] How different are lh and lh_new? {distance.hamming(lh, lh_new)}")
   
         perf_score = f1_score(L_test, lh)
@@ -611,12 +616,13 @@ def train_model(model, input_data, **kargs):
     #----------------
     split_pt = int((1-test_size) * Xc.shape[0])
 
-    X_train, X_val, y_train, y_val, W_train = (
+    X_train, X_val, y_train, y_val, W_train, W_val = (
         Xc[:split_pt],
         Xc[split_pt:],
         yc[:split_pt],
         yc[split_pt:],
-        sample_weights[:split_pt]
+        sample_weights[:split_pt], 
+        sample_weights[split_pt:]
     )
 
     # Assume that the model has been configured and passed in as an object
@@ -631,7 +637,7 @@ def train_model(model, input_data, **kargs):
         batch_size=batch_size,
         epochs=epochs,
         verbose=1,
-        validation_data=(X_val, y_val), # test how the model predict unseen ratings
+        validation_data=(X_val, y_val, W_val), # test how the model predict unseen ratings
         callbacks=[tensorboard_callback]
     )
 
