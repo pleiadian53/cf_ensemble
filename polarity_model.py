@@ -128,6 +128,13 @@ def color_matrix_to_labels(Pc, codes={}, pos_label=1, neg_label=0):
             L.append(1-neg_label)
 
     return np.array(L)
+def color_vector_to_label(colors, codes={}, pos_label=1, neg_label=0):
+    # colors: colors associated with a particular column of the color matrix (Pc)
+
+    if len(codes)==0: codes = Polarity.codes
+    if (codes['tp'] in colors) or (codes['fn'] in colors):
+        return pos_label
+    return neg_label
 
 def verify_colors(Pc, X=None, codes={}):
     # Foreach data point (column vector): 

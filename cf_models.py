@@ -96,27 +96,27 @@ class CFNet(keras.Model):
 
 def get_cfnet_uncompiled(n_users, n_items, n_factors): 
     return CFNet(n_users, n_items, n_factors)
-def get_cfnet_compiled(n_users, n_items, n_factors, loss=None):
+def get_cfnet_compiled(n_users, n_items, n_factors, loss=None, lr=0.001):
     if loss is None: loss = tf.keras.losses.MeanSquaredError()
     model = CFNet(n_users, n_items, n_factors)
     model.compile(
-        loss=loss, optimizer=keras.optimizers.Adam(lr=0.001)
+        loss=loss, optimizer=keras.optimizers.Adam(lr=lr)
     )
     return model
 
-def get_cfnet_approximating_labels(n_users, n_items, n_factors): 
+def get_cfnet_approximating_labels(n_users, n_items, n_factors, lr=0.001): 
     loss_fn = bce = tf.keras.losses.BinaryCrossentropy()
     model = CFNet(n_users, n_items, n_factors)
     model.compile(
-        loss=loss_fn, optimizer=keras.optimizers.Adam(lr=0.001)
+        loss=loss_fn, optimizer=keras.optimizers.Adam(lr=lr)
     )
     return model
 
-def get_cfnet_approximating_scores(n_users, n_items, n_factors): 
+def get_cfnet_approximating_scores(n_users, n_items, n_factors, lr=0.001): 
     loss_fn = mse = tf.keras.losses.MeanSquaredError()
     model = CFNet(n_users, n_items, n_factors)
     model.compile(
-        loss=loss_fn, optimizer=keras.optimizers.Adam(lr=0.001)
+        loss=loss_fn, optimizer=keras.optimizers.Adam(lr=lr)
     )
     return model
 
@@ -532,6 +532,14 @@ def train_model(model, input_data, **kargs):
     ctype = kargs.get("ctype", 'Cn')
     #-----------------------
 
+    # SGD training paramters
+    #-----------------------
+    epochs = kargs.get('epochs', 100)
+    batch_size = kargs.get('batch_size', 64)
+    loss_fn = kargs.get('loss_fn', None)
+    is_cross_entropy = True if str(loss_fn).split('.')[2].lower().find('entropy') > 0 else False
+    #-----------------------
+
     verbose = kargs.get("verbose", 1)
 
     # Load pre-trained level-1 data (associated with a given fold number)
@@ -588,8 +596,12 @@ def train_model(model, input_data, **kargs):
     # else: 
     #     C = C0
 
-    Xc, yc, weights, colors = dp.matrix_to_augmented_training_data(R, Cw, Pc) # NOTE: Don't overwrite X (`Xc` is not the same as `X`, which is a rating matrix)
-    # yc = np.column_stack([yc, weights, colors]) # Note: Only relevant in color-aware loss functions
+    if is_cross_entropy: # If the loss function is a entropy-based loss, we measure the loss wrt to the true labels
+        Lr = uc.estimateLabelMatrix(R, p_th=p_threshold)
+        Xc, yc, weights, colors = dp.matrix_to_augmented_training_data(Lr, Cw, Pc)
+    else: 
+        Xc, yc, weights, colors = dp.matrix_to_augmented_training_data(R, Cw, Pc) 
+    # NOTE: Don't overwrite X (`Xc` is not the same as `X`, which is a rating matrix)
 
     sample_weights = dp.unravel(Cn, normalize=False) # Cn is a masked and balanced version of C0
     assert len(sample_weights) == Xc.shape[0]
@@ -616,8 +628,8 @@ def train_model(model, input_data, **kargs):
         x=X_train,
         y=y_train,
         sample_weight=W_train, 
-        batch_size=64,
-        epochs=100,
+        batch_size=batch_size,
+        epochs=epochs,
         verbose=1,
         validation_data=(X_val, y_val), # test how the model predict unseen ratings
         callbacks=[tensorboard_callback]

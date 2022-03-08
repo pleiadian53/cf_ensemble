@@ -48,24 +48,39 @@ class FaissKNN:
 
 # Count-based methods 
 ################################################################
-def most_common_element_and_position(x):
-    u = np.unique(x) # `x` can be negative (which cannot be handled by bincount)
-    umap = dict(zip(u, range(len(u))))
-    umap_inv = dict(zip(range(len(u)), u))
+def most_common_element_and_position(x, pos_key_only=True):
+    if len(x) == 0: 
+        return (None, -1)
 
-    # most common element
-    elem = umap_inv[np.argmax(np.bincount([umap[e] for e in x]))] 
+    # It's cool to use the np.argmax( np.bincount() ) idiom but it's not necessarily fast
+    # u = np.unique(x) # `x` can be negative (which cannot be handled by bincount)
+    # umap = dict(zip(u, range(len(u))))
+    # umap_inv = dict(zip(range(len(u)), u))
+    # elem = umap_inv[np.argmax(np.bincount([umap[e] for e in x]))] # most common element
+    
+    counter = collections.Counter(x)
+    
+    elem = counter.most_common(1)[0][0]
+    if pos_key_only: 
+        for k, v in counter.most_common(): 
+            if k > 0: 
+                elem = k
+                break
 
     # position
     pos = np.argmax(np.array(x)==elem)
     return elem, pos
-def most_common_element(x): 
-    u = np.unique(x) # `x` can be negative (which cannot be handled by bincount)
-    umap = dict(zip(u, range(len(u))))
-    umap_inv = dict(zip(range(len(u)), u))
+def most_common_element(x, pos_key_only=True): 
+    if len(x) == 0: 
+        return (None, -1)
 
-    # most common element
-    elem = umap_inv[np.argmax(np.bincount([umap[e] for e in x]))] 
+    counter = collections.Counter(x)
+    elem = counter.most_common(1)[0][0]
+    if pos_key_only: 
+        for k, v in counter.most_common(): 
+            if k > 0: 
+                elem = k
+                break
     return elem  
     
 
