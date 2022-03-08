@@ -35,6 +35,7 @@ plt.style.use('ggplot')  # values: {'seaborn', 'ggplot', }
 # from utils_plot import saveFig, plot_path
 
 # CF modules
+import analyzer
 from analyzer import is_sparse
 import cf_spec
 from cf_spec import System
@@ -3708,7 +3709,7 @@ def verify_confidence_matrix(C, X, L, p_threshold, Po=None, U=[], measure='rank'
     msg += '\n--- Confidence score (weight) sum total per class ---\n'
     msg += f"... N(TP): {n_tp}, N(TN): {n_tn}, N(TP)/N(TN): {n_tp/(n_tn+0.0)}\n"
     msg += f"... W(TP): {Wtp_total}, W(TN): {Wtn_total}, W(TP)/W(TN): {Wtp_total/(Wtn_total+0.0)}\n"
-    msg += f"... Balanced? W(TP)/W(TN)={Wtp_total/(Wtn_total+0.0)} ~ 1.0\n"
+    msg += f"... Balanced? W(TP)/W(TN)={Wtp_total/(Wtn_total+0.0)} ~? 1.0\n"
 
     print(msg); print()
     ################################################
@@ -4130,6 +4131,9 @@ def toConfidenceMatrix(X, L, **kargs):
     
     # Cui/C0: Raw confidence scores 
     Cui = np.zeros(C0.shape)+C0
+    if verbose > 1: 
+        _, Cui_partial = analyzer.uniform_box_sampler(Cui, (0, max(Cui.shape[0]//2-10, 5)), 
+                                                           (Cui.shape[0], max(Cui.shape[0]//2+10, 5)))
 
     # Old parameters for polarity modeling (not considered at the moment)
     #################################################################

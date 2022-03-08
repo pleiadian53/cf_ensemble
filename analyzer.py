@@ -28,6 +28,152 @@ from statsmodels.nonparametric.kernel_density import KDEMultivariate
 import warnings
 warnings.filterwarnings("ignore")
 
+
+# Matrix diagnosis utilties
+######################################################
+def box_sampler(arr, 
+                loc_sampler_fn, 
+                loc_dim_param, 
+                loc_params, 
+                shape_sampler_fn, 
+                shape_dim_param,
+                shape_params):
+    """
+    Extracts a sample cut from `arr`.
+
+    Parameters
+    ----------
+    loc_sampler_fn : function
+        The function to determine the where the minimum coordinate
+        for each axis should be placed.
+    loc_dim_param : string or None
+        The parameter in `loc_sampler_fn` that should use the axes
+        dimension size
+    loc_params : dict
+        Parameters to pass to `loc_sampler_fn`.
+    shape_sampler_fn : function
+        The function to determine the width of the sample cut 
+        along each axis.
+    shape_dim_param : string or None
+        The parameter in `shape_sampler_fn` that should use the
+        axes dimension size.
+    shape_params : dict
+        Parameters to pass to `shape_sampler_fn`.
+
+    Returns
+    -------
+    (slices, x) : A tuple of the slices used to cut the sample as well as
+    the sampled subsection with the same dimensionality of arr.
+        slice :: list of slice objects
+        x :: array object with the same ndims as arr
+
+    Examples 
+    --------
+    # 1. A uniform cut on a 2D array with widths between 3 and 9:
+    a = np.random.randint(0, 1+1, size=(100,150))
+    box_sampler(a, 
+                np.random.uniform, 'high', {'low':0}, 
+                np.random.uniform, None, {'low':3, 'high':10})
+    Output
+    ------
+    ([slice(49, 55, None), slice(86, 89, None)], 
+     array([[0, 0, 1],
+            [0, 1, 1],
+            [0, 0, 0],
+            [0, 0, 1],
+            [1, 1, 1],
+            [1, 1, 0]]))
+
+    # 2. Taking 2x2x2 chunks from a 10x20x30 3D array
+
+    a = np.random.randint(0,2,size=(10,20,30))
+    box_sampler(a, np.random.uniform, 'high', {'low':0}, 
+                   np.random.uniform, None, {'low':2, 'high':2})
+    # returns:
+    ([slice(7, 9, None), slice(9, 11, None), slice(19, 21, None)], 
+     array([[[0, 1],
+             [1, 0]],
+            [[0, 1],
+             [1, 1]]]))
+
+    Reference 
+    ---------
+    1. https://stackoverflow.com/questions/47373311/randomly-sample-sub-arrays-from-a-2d-array-in-python
+    """
+    if sparse.issparse(arr): arr = arr.A
+    # [todo] Add out-of-bound adjustments
+
+    slices = []
+    for dim in arr.shape:
+        if loc_dim_param:
+            loc_params.update({loc_dim_param: dim})
+        if shape_dim_param:
+            shape_params.update({shape_dim_param: dim})
+        start = int(loc_sampler_fn(**loc_params))
+        stop = start + int(shape_sampler_fn(**shape_params))
+        slices.append(slice(start, stop))
+    return slices, arr[tuple(slices)]
+
+def uniform_box_sampler(arr, min_width, max_width):
+    """
+    Extracts a sample cut from `arr`.
+
+    Parameters
+    ----------
+    arr : array
+        The numpy array to sample a box from
+    min_width : int or tuple
+        The minimum width of the box along a given axis.
+        If a tuple of integers is supplied, it my have the
+        same length as the number of dimensions of `arr`
+    max_width : int or tuple
+        The maximum width of the box along a given axis.
+        If a tuple of integers is supplied, it my have the
+        same length as the number of dimensions of `arr`
+
+    Returns
+    -------
+    (slices, x) : A tuple of the slices used to cut the sample as well as
+    the sampled subsection with the same dimensionality of arr.
+        slice :: list of slice objects
+        x :: array object with the same ndims as arr
+
+    Examples
+    --------
+    # 1. Generate a box cut that starts uniformly anywhere in the array, 
+        the height is a random uniform draw from 1 to 4 and the width is a random uniform draw from 2 to 6 (just to show). 
+        In this case, the size of the box was 3 by 4, starting at the 66th row and 19th column.
+
+    x = np.random.randint(0,2,size=(100,100))
+    uniform_box_sampler(x, (1,2), (4,6))
+    # returns:
+    ([slice(65, 68, None), slice(18, 22, None)], 
+     array([[1, 0, 0, 0],
+            [0, 0, 1, 1],
+            [0, 1, 1, 0]]))
+    """
+    if sparse.issparse(arr): arr = arr.A
+
+    if isinstance(min_width, (tuple, list)):
+        assert len(min_width)==arr.ndim, 'Dimensions of `min_width` and `arr` must match'
+    else:
+        min_width = (min_width,)*arr.ndim
+    if isinstance(max_width, (tuple, list)):
+        assert len(max_width)==arr.ndim, 'Dimensions of `max_width` and `arr` must match'
+    else:
+        max_width = (max_width,)*arr.ndim
+
+    # [todo] Add out-of-bound adjustments
+
+    slices = []
+    for dim, mn, mx in zip(arr.shape, min_width, max_width):
+        fn = np.random.uniform
+        start = int(np.random.uniform(0,dim))
+        stop = start + int(np.random.uniform(mn, mx+1))
+        slices.append(slice(start, stop))
+    return slices, arr[tuple(slices)]
+
+
 #######################################################
 # KDE utilities
 
