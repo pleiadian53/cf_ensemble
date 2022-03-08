@@ -827,9 +827,9 @@ def confidence_performance(R, labels, mode='user', metric='fmax', topk=0, marker
     return W
 
 def confidence_brier(R, labels, mode='label', topk=0, p_threshold=[], masked_only=False, marker=0): 
-    # value: between [0, 1]; a cost function so the smaller the better
-    # from sklearn.metrics import brier_score_loss
+    # Value ranges between [0, 1]; "inverse" of a cost function so the LARGER the BETTER
     
+    # from sklearn.metrics import brier_score_loss
     # confidence(R, labels, mode=mode, topk=topk, scoring=brier_score_loss, greater_is_better=False)
     # if p_threshold is not None: 
     #     if isinstance(p_threshold, float): 
@@ -847,10 +847,11 @@ def confidence_brier(R, labels, mode='label', topk=0, p_threshold=[], masked_onl
                 valid = np.where(R[i, :] != marker)
 
                 # format: y_true, y_prob
-                W[i] = brier_score_loss(labels[valid], R[i, :][valid])  # convert to confidence, the higher the better 
+                W[i] = brier_score_loss(labels[valid], R[i, :][valid]) # a loss => the smaller the better 
+                # NOTE: YET to be converted to confidence, the higher the better 
         else: 
             for i in range(R.shape[0]): 
-                W[i] = brier_score_loss(labels, R[i, :])  # convert to confidence, the higher the better
+                W[i] = brier_score_loss(labels, R[i, :])  # a loss => the smaller the better
     elif mode.startswith('i'):  # item-label corr
         W = np.zeros(R.shape[1])
 
@@ -859,7 +860,7 @@ def confidence_brier(R, labels, mode='label', topk=0, p_threshold=[], masked_onl
             for j in range(R.shape[1]):
                 valid = np.where(R[:, j] != marker)
                 r_valid = R[:, j][valid]
-                W[j] = brier_score_loss(np.repeat(labels[j], len(r_valid)), r_valid)  # convert to confidence, the higher the better 
+                W[j] = brier_score_loss(np.repeat(labels[j], len(r_valid)), r_valid)  # a loss => the smaller the better
         else: 
             for j in range(R.shape[1]): # foreach item/datum
                 W[j] = brier_score_loss(np.repeat(labels[j], R.shape[0]),  R[:, j]) 
@@ -867,8 +868,11 @@ def confidence_brier(R, labels, mode='label', topk=0, p_threshold=[], masked_onl
     else: 
         raise NotImplementedError("Mode: %s is not available yet." % mode)
 
-    # The smaller the brier score, the higher the confidence
+    # Inverse the cost so that the smaller the brier score, the higher the confidence
+    #################################################################################
     W = 1. - W
+
+    #################################################################################
 
     # Suppress the weights except for the topk 
     if topk: 
