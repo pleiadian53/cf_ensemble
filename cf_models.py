@@ -39,7 +39,7 @@ import utils_classifier as uclf
 import utils_sys as us
 import utils_cf as uc 
 import utils_knn as uknn
-import polarity_model as pmodel
+import polarity_models as pmodel
 
 from analyzer import is_sparse # or use sparse.issparse()
 import scipy.sparse as sparse

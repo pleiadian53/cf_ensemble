@@ -1,5 +1,35 @@
 
 
+if tEstimatedLabels and len(L_test) > 0: 
+        accuracy = np.sum(lh == L_test) / (len(L_test)+0.0)
+        div('(toConfidenceMatrix) Accuracy of estimated labels: {} | n(L_ext): {}'.format(accuracy, len(L_test)), symbol='#', border=2)
+
+
+# Compute considence scores that reflect quality of the predictions
+    # - confidence scores are later to be used in the optimization for deriving latent factors
+    ################################################################# 
+    C0 = confidence2D(X, L, mode=conf_measure, 
+                scoring=kargs.get('scoring', brier_score_loss), 
+                outer_product=False, 
+
+                    # following params are used only when mode = 'ratio'
+                    p_threshold=p_threshold,  
+                    policy_threshold=kargs.get('policy_threshold', ''), 
+                    ratio_small_class=kargs.get('ratio_small_class', 0.01), verbose=verbose)  # don't return outer(wu, Wi) 
+    
+    # Cui/C0: Raw confidence scores 
+    Cui = np.zeros(C0.shape)+C0
+    if verbose > 1: 
+        _, Cui_partial = uniform_box_sampler(Cui, (0, max(Cui.shape[0]//2-10, 5)), 
+                                                           (Cui.shape[0], max(Cui.shape[0]//2+10, 5)))
+        print(f"[info] Partial raw confidence matrix (C0):\n{Cui_partial}\n")
+
+# Cn: A masked confidence matrix where the confidence scores associated with FPs and FNs are set to 0
+    Cn = mask_neutral_and_negative(C0, Pc, is_unweighted=False, weight_negative=0.0, sparsify=True)
+    Cn = balance_and_scale(Cn, X=X, L=L, Po=Pc, p_threshold=p_threshold, U=U, 
+                        alpha=alpha, conf_measure=conf_measure, n_train=n_train, verbose=verbose)
+
+
 # How to quantify the uncertainty and entropy-like concept observed in color matrix? 
 
 [[-2 -2 -2  2 -2 -2 -2 -2 -2 -2]

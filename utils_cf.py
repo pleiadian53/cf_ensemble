@@ -43,7 +43,7 @@ from nnls import NNLS
 import common, utilities
 
 # import utils_knn as uknn
-import polarity_model as pmodel
+import polarity_models as pmodel
 
 import utils_sys
 from utils_sys import div
@@ -2349,6 +2349,11 @@ def evalConfidenceMatrices(X, L, alpha=10.0, p_threshold=[], conf_measure='brier
     assert len(uniq_colors) >= 4, f"n_colors: {uniq_colors}"
 
     return (Pc, C0, Cw, Cn)
+
+def eval_confidence_given_color_matrix(X, L, alpha=10.0, p_threshold=[], conf_measure='brier', policy_threshold='fmax', **kargs): 
+
+
+    return
 
 def analyzeMask(R, M, L, pos_label=1, neg_label=0):
     """

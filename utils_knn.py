@@ -209,7 +209,7 @@ def estimate_labels_by_rank(fknn, T, Pc, topn=3, rank_fn=None,
                     larger_is_better=True, 
                     pos_label=1, neg_label=0, 
                     verbose=0):
-    import polarity_model as pmodel 
+    import polarity_models as pmodel 
 
     if sparse.issparse(Pc): Pc = Pc.A
 
@@ -256,7 +256,7 @@ def estimate_labels_by_rank(fknn, T, Pc, topn=3, rank_fn=None,
             print(f"[info] sorted_knn_i (n={topn}):\n{sorted_knn_i}\n")
             assert set(top_knn_i) <= set(idx_knn_i)
             print(f"[info] top_knn_i:\n{top_knn_i}\n")
-            print(f"[info] L_knn(n={topn}: {L_knn}")
+            print(f"[info] L_knn(n={topn}): {L_knn}")
             print(f"..... top_knn_ij: {top_knn_ij}")
             print(f"..... Pc_{i} local:\n{Pc_i[:, top_knn_ij]}\n")
   
