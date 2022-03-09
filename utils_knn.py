@@ -3,47 +3,18 @@ import os, sys, re, math, random, time
 import collections
 import scipy
 
+import pandas as pd
 import numpy as np
 
 # Scikit-learn 
 from sklearn.preprocessing import normalize
 
-
+from scipy.stats import entropy
 from utilities import normalize
 import scipy.sparse as sparse
 # from sklearn.preprocessing import normalize
 
-class FaissKNN:
-    def __init__(self, k=5, normalize=False):
-        self.index = None
-        self.y = None
-        self.y_tag = None # other meta data for the label/target such as polarities, colors
-        self.k = k
-        self.normalize_input = normalize
-
-    def fit(self, X, y):
-        self.index = faiss.IndexFlatL2(X.shape[1]) # Each x in X is in row-vector format i.e. X has shape  (n_instances, n_dim)
-        # Note: Rating matrix (X), however, is in column-vector format; therefore, we need to remember to take transpose before using it as an input
-  
-        if self.normalize_input: 
-            X = normalize(X, axis=1) # X is in row-vector format
-
-        self.index.add(X.astype(np.float32))
-        self.y = y
-
-    def predict(self, X):
-        distances, indices = self.index.search(X.astype(np.float32), k=self.k)
-        # shape(distances): (n_instances, k)
-        # shape(indices):   (n_instances, k)
-
-        votes = self.y[indices] # note: shape(votes)=shape(indices)
-        predictions = np.array([np.argmax(np.bincount(x)) for x in votes])
-        # np.bincount([1, 1, 1, 0, 1, 0, 0, 0, 1, 1]) 
-        # ~> array([4, 6]) because index 0 occurs 4 times, and 1 occurs 6 times
-        return predictions
-    def search(self, X): 
-        distances, indices = self.index.search(X.astype(np.float32), k=self.k)
-        return distances, indices
+# import knn_models
 
 
 # Count-based methods 
@@ -82,13 +53,39 @@ def most_common_element(x, pos_key_only=True):
                 elem = k
                 break
     return elem  
+def conditional_majority_vote(x, condition=None, pos_key_only=True): 
+    # Find the target element by majority vote excluding those with negative values (e.g. those that do not satisfy a desirable condition)
+    
+    if condition is None: 
+        return most_common_element(x, pos_key_only=pos_key_only)
+
+    if isinstance(condition, (list, tuple, np.ndarray)): 
+        cx = np.ones_like(condition)
+        x = np.array(x) * cx
+        return most_common_element(x, pos_key_only=pos_key_only)
+
+    # Otherwise conditions must be a callable (predicate) used to evaluate elements in x 
+    # to True or False: If True, assign 1, if False, assign -1 (so that majority vote won't count these elements)
+    assert callable(condition), f"Invalid condition given: {condition}"
+
+    t = np.array([conditions(e) for e in x]).astype(int)
+    cx = np.where(t==0, -1, 1)
+    x = np.array(x) * cx
+    return most_common_element(x, pos_key_only=pos_key_only)
 
 # Error Analysis
 ###############################################################
 
-def analyze_knn(fknn, T, L_test, Pc, target_label=1): 
+def analyze_knn(fknn, X_test, L_test, Pc, target_label=1): 
+    """
 
-    distances, indices = fknn.search(T) # fknn must have been fit
+    Parameters 
+    ----------
+    fknn: An instance of FaissKNN that supports .search() method call
+          See `knn_models` for details as for how to create an instance of FaissKNN 
+    """
+    distances, indices = fknn.search(X_test) # fknn must have been fit
+    # NOTE: Reminder if X_test is assigned to a rating matrix (like T), remember to take transpose!
 
     target_examples = np.where(L_test == target_label)[0]
     Nt = len(target_examples)
@@ -120,6 +117,160 @@ def analyze_knn(fknn, T, L_test, Pc, target_label=1):
 
 # Similarity measure-related utilities
 ################################################################
+
+def compute_impurity(feature, impurity_criterion='entropy', base=2):
+    """
+    This function calculates impurity of a feature.
+    Supported impurity criteria: 'entropy', 'gini'
+    input: feature (this needs to be a Pandas series)
+    output: feature impurity
+    """
+    probs = pd.Series(feature).value_counts(normalize=True)
+    
+    if impurity_criterion == 'entropy':
+        impurity = entropy(probs, base=base) # -1 * np.sum(np.log2(probs) * probs)
+        # base: default (when base=None) is np.e
+
+    elif impurity_criterion == 'gini':
+        impurity = 1. - np.sum(np.square(probs))
+    else:
+        raise ValueError('Unknown impurity criterion')
+        
+    return(round(impurity, 3))
+
+
+def compute_feature_information_gain(df, target, descriptive_feature, split_criterion='entropy', verbose=0):
+    """
+    This function calculates information gain for splitting on 
+    a particular descriptive feature for a given dataset (df[target])
+    and a given impurity criteria.
+    Supported split criterion: 'entropy', 'gini'
+
+    Reference 
+    ---------
+    1. https://www.featureranking.com/tutorials/machine-learning-tutorials/information-gain-computation/
+    """
+    if verbose: 
+        print('target feature:', target)
+        print('descriptive_feature:', descriptive_feature)
+        print('split criterion:', split_criterion)
+            
+    target_entropy = compute_impurity(df[target], split_criterion)
+
+    # we define two lists below:
+    # entropy_list to store the entropy of each partition
+    # weight_list to store the relative number of observations in each partition
+    entropy_list = list()
+    weight_list = list()
+    
+    # loop over each level of the descriptive feature
+    # to partition the dataset with respect to that level
+    # and compute the entropy and the weight of the level's partition
+    for level in df[descriptive_feature].unique():
+        df_feature_level = df[df[descriptive_feature] == level]
+        entropy_level = compute_impurity(df_feature_level[target], split_criterion)
+        entropy_list.append(round(entropy_level, 3))
+        weight_level = len(df_feature_level) / len(df)
+        weight_list.append(round(weight_level, 3))
+
+    if verbose: 
+        print('impurity of partitions:', entropy_list)
+        print('weights of partitions:', weight_list)
+
+    feature_remaining_impurity = np.sum(np.array(entropy_list) * np.array(weight_list))
+    if verbose: 
+        print('remaining impurity:', feature_remaining_impurity)
+    
+    information_gain = target_entropy - feature_remaining_impurity
+    if verbose: 
+        print('information gain:', information_gain)
+        print('====================')
+
+    return(information_gain)
+
+def compute_entropy(v, base=2): # [todo] efficiency
+    """
+
+    Reference 
+    ---------
+    1. https://www.featureranking.com/tutorials/machine-learning-tutorials/information-gain-computation/
+    """
+    # from scipy.stats import entropy
+
+    # Method 1
+    # probs = np.array([np.sum(v==e)/len(v) for e in np.unique(v)])
+
+    # Method 2: Use pandas 
+    probs = pd.Series(v).value_counts(normalize=True)
+
+    return entropy(probs, base=base)
+
+def estimate_labels_by_rank(fknn, T, Pc, topn=3, rank_fn=None, 
+                    larger_is_better=True, 
+                    pos_label=1, neg_label=0, 
+                    verbose=0):
+    import polarity_model as pmodel 
+
+    if sparse.issparse(Pc): Pc = Pc.A
+
+    # if T.shape[1] == Pc.shape[0]: # T wasn't being transposed 
+    #     T = T.T
+
+    if rank_fn is None: 
+        rank_fn = compute_entropy
+        larger_is_better = False
+    
+    k_knn = fknn.k # the constant `k` of the kNN
+    topn = min(k_knn, topn) # top `n` of the kNN (i.e. top of the top :)
+    
+    n_users, n_test = T.shape
+    distances, indices = fknn.search(T.T) # fknn must have been fit
+
+    test_points = set(np.random.choice(range(n_test), 10))
+    top_indices = []
+    lh = []
+    for i in range(n_test): 
+        idx_knn_i = indices[i] # test point (i)'s k nearest neighbors in R (in terms of their indices)
+        Pc_i = Pc[:, idx_knn_i].astype(int) # subset the color matrix at kNN indices
+
+        # Choose among top kNNs      
+        # [todo] Remove classifiers and kNNs that do not contribute to useful information (i.e. negative row-wise polarities and column-wise polarities)
+        
+        # Sort each kNN according to their entropy values
+        sorted_knn_i = sorted([(compute_entropy(Pc_i[:, j]), j) for j in range(k_knn)], 
+                                    reverse=larger_is_better)[:topn] # sort from small to large, entropy-wise
+
+        # [todo] Assign (normalized) weights to each kNN based on the rank function
+
+        # Get the global indices (wrt Pc) of the top N kNNs
+        top_knn_i = [ idx_knn_i[knn_ij[1]] for knn_ij in sorted_knn_i]  #  idx_knn_i[j]
+        top_indices.append(top_knn_i)
+        # Note: knn_ij[1] is the index within Pc_i => idx_knn_i[knn_ij[1]] is the position in Pc
+
+        top_knn_ij = [knn_ij[1] for knn_ij in sorted_knn_i]
+        L_knn = pmodel.color_matrix_to_labels( Pc_i[:, top_knn_ij] )
+        assert len(L_knn) == len(sorted_knn_i)
+
+        if verbose and (i in test_points): 
+            print(f"[info] Pc_{i}:\n{Pc_i}\n")
+            print(f"[info] sorted_knn_i (n={topn}):\n{sorted_knn_i}\n")
+            assert set(top_knn_i) <= set(idx_knn_i)
+            print(f"[info] top_knn_i:\n{top_knn_i}\n")
+            print(f"[info] L_knn(n={topn}: {L_knn}")
+            print(f"..... top_knn_ij: {top_knn_ij}")
+            print(f"..... Pc_{i} local:\n{Pc_i[:, top_knn_ij]}\n")
+  
+        # [todo] Weighted voting? 
+        lh.append(most_common_element(L_knn, pos_key_only=True))
+
+
+    # for u in range(n_users): 
+    #     color, pos = uknn.most_common_element_and_position(Pc_i[u, :], pos_key_only=True)
+    #     max_colors.append(color)
+    #     max_indices.append(knn_idx[pos]) # we want the knn index
+    #     X_knn_best = dp.zip_user_item_pairs(T, item_ids=max_indices)
+
+    return np.array(lh), np.array(top_indices)
 
 def pairwise_similarity0(ratings, kind='user'):
     """

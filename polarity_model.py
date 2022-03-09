@@ -125,7 +125,7 @@ def color_matrix_to_labels(Pc, codes={}, pos_label=1, neg_label=0):
         if (codes['tp'] in colors) or (codes['fn'] in colors): 
             L.append(pos_label)
         else: 
-            L.append(1-neg_label)
+            L.append(1-pos_label)
 
     return np.array(L)
 def color_vector_to_label(colors, codes={}, pos_label=1, neg_label=0):

@@ -35,14 +35,14 @@ plt.style.use('ggplot')  # values: {'seaborn', 'ggplot', }
 # from utils_plot import saveFig, plot_path
 
 # CF modules
-import analyzer
-from analyzer import is_sparse
+# import analyzer
+from analyzer import uniform_box_sampler # is_sparse
 import cf_spec
 from cf_spec import System
 from nnls import NNLS
 import common, utilities
 
-import utils_knn as uknn
+# import utils_knn as uknn
 import polarity_model as pmodel
 
 import utils_sys
@@ -337,15 +337,19 @@ def combiner_pref(Th, T):
     return np.array(predictions)
 
 def pairwise_similarity(ratings, kind='user', epsilon=1e-9):
+    import utils_knn as uknn
     return uknn.pairwise_similarity(ratings, kind=kind)
 
 def corr(A,B, axis=1):
+    import utils_knn as uknn
     return uknn.corr(A, B, axis=axis)
 def eval_correlation(R, kind='user', epsilon=1e-9, to_distance=False): 
+    import utils_knn as uknn
     return uknn.eval_correlation(R, kind=kind, to_distance=to_distance)
 
 # [todo]
 def eval_similarity(R, kind='user', centering=False, epsilon=1e-9): # 
+    import utils_knn as uknn
     return uknn.eval_similarity(R, kind=kind, centering=centering)
 
 def transfer_factor_by_similarity(X, F, topk=1): 
@@ -436,6 +440,7 @@ def eval_similarity_by_latent_factors(A, epsilon=1e-9):
        and cannot be used for hierarchical clustering
 
     """
+    import utils_knn as uknn
     return uknn.eval_similarity_by_latent_factors(A, epsilon=epsilon)
 
 def to_affinity(A, sim_func=None, sig=0.5, verify=False):
@@ -457,6 +462,7 @@ def to_affinity(A, sim_func=None, sig=0.5, verify=False):
     return S  # if A is symmetric, then S is symmetric
 
 def eval_cross_similarity(T, R, kind='item', unbiased=True, epsilon=1e-9): 
+    import utils_knn as uknn
     return uknn.eval_cross_similarity(T, R, kind=kind, unbiased=unbiased)
 
 def rank(X, **kargs):
@@ -1499,6 +1505,22 @@ def estimateLabelMatrix(R, L=[], p_th=[], pos_label=1, neg_label=0, ratio_small_
 
     return Lh
 
+def estimateLabelsByKNN(R, T, L_train, Pc, topn=3, rank_fn=None, larger_is_better=True, **kargs): 
+    import utils_knn as uknn
+    from knn_models import FaissKNN
+
+    k_knn = kargs.get('k', 10)
+    verbose = kargs.get('verbose', 0)
+
+    model_knn = FaissKNN(k=k_knn) 
+    model_knn.fit(R.T, L_train) # NOTE: remember to take transpose of R
+
+    lh, top_indices = uknn.estimate_labels_by_rank(model_knn, T, Pc, topn=topn, 
+                        rank_fn=rank_fn, 
+                        larger_is_better=larger_is_better, 
+                        verbose=verbose)
+    return lh
+
 def estimateLabels(T, L=[], p_th=[], Eu=[], pos_label=1, neg_label=0, M=None, labels=[], policy='', ratio_small_class=0, joint_model=None):
     """
     Estimate the labels based on the input rating matrix. 
@@ -2288,6 +2310,8 @@ def evalConfidenceMatrices(X, L, alpha=10.0, p_threshold=[], conf_measure='brier
     Cn: Masked confidence matrix
 
     """
+    import scipy.sparse as sparse
+
     # Optional parameters
     ##################################################
     fold_number = kargs.get('fold_number', 0) # for debugging only
@@ -2321,7 +2345,7 @@ def evalConfidenceMatrices(X, L, alpha=10.0, p_threshold=[], conf_measure='brier
     assert np.all(Cn[Pc > 0]>0)
 
     # Color matrix should have 4 distinct values
-    uniq_colors = np.unique(Pc.A if is_sparse(Pc) else Pc)
+    uniq_colors = np.unique(Pc.A if sparse.issparse(Pc) else Pc)
     assert len(uniq_colors) >= 4, f"n_colors: {uniq_colors}"
 
     return (Pc, C0, Cw, Cn)
@@ -3347,7 +3371,8 @@ def mask_over_dual(C, X, L, ratio_users=0.5,
     return C, C_prime
 
 def shift(C, offset=-1.0):
-    if is_sparse(C): 
+    import scipy.sparse as sparse
+    if sparse.issparse(C): 
         C = C.todense() + offset
         return sparse.csr_matrix(C)
     return C + offset
@@ -3983,6 +4008,7 @@ def toConfidenceMatrix(X, L, **kargs):
         return  # C is modified in place
 
     # from sklearn.metrics import brier_score_loss
+    from analyzer import uniform_box_sampler
     import scipy.sparse as sparse
     from evaluate import findOptimalCutoff   #  p_th <- f(y_true, y_score, metric='fmax', pos_label=1)
     import collections
@@ -4132,8 +4158,9 @@ def toConfidenceMatrix(X, L, **kargs):
     # Cui/C0: Raw confidence scores 
     Cui = np.zeros(C0.shape)+C0
     if verbose > 1: 
-        _, Cui_partial = analyzer.uniform_box_sampler(Cui, (0, max(Cui.shape[0]//2-10, 5)), 
+        _, Cui_partial = uniform_box_sampler(Cui, (0, max(Cui.shape[0]//2-10, 5)), 
                                                            (Cui.shape[0], max(Cui.shape[0]//2+10, 5)))
+        print(f"[info] Partial raw confidence matrix (C0):\n{Cui_partial}\n")
 
     # Old parameters for polarity modeling (not considered at the moment)
     #################################################################
@@ -4413,6 +4440,7 @@ def predict_new_items(R, T, S=None, kind='item', topk=None, canonicalize=True, e
     return Th
 
 def predict_by_similarity(R, T, *, S=None, kind='user', topk=None, canonicalize=True, epsilon=1e-9):
+    import utils_knn as uknn
     # return value: (Rh, Th)
     return uknn.predict_by_similarity(R, T, S=S, kind=kind, topk=topk, canonicalize=canonicalize)
     
@@ -5234,7 +5262,7 @@ def predict_by_factors(P, Q, canonicalize=True, name='X'):
     Xh = np.dot(P, Q.T)
     # Rh = np.array(Rh.todense())
     print("(predict_by_factors) type(P): {}, type(Xh): {}".format(type(P), type(Xh)))
-    if is_sparse(Xh): # not isinstance(Xh, np.ndarray): 
+    if sparse.issparse(Xh): # not isinstance(Xh, np.ndarray): 
         Xh = Xh.A
     if canonicalize: Xh = canonicalize_prob(Xh, name=name)
   

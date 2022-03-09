@@ -400,7 +400,7 @@ def interpolate(X, Xh, Pc=None, C=None, L=[], p_threshold=[], use_confidence_wei
 
     return Xh_partial
 
-def analyze_reestimated_matrices(train, test, meta): 
+def analyze_reestimated_matrices(train, test, meta, **kargs): 
     # use nametuple to represent the following:
     # train: R, L_train 
     # test:  T, L_test 
@@ -440,12 +440,32 @@ def analyze_reestimated_matrices(train, test, meta):
 
     print(f"[info] How different are lh and lh_new? {distance.hamming(lh, lh_new)}")
 
+    # Prediction: By majority vote
+    ####################################
     perf_score = f1_score(L_test, lh)
     print(f'[result] F1 score with the original T:  {perf_score}')
 
     perf_score = f1_score(L_test, lh_new) 
     print(f'[result] F1 score with re-estimated Th: {perf_score}')
-        
+
+    # Prediction: By stacking
+    ####################################
+    include_stacking = kargs.get('include_stacking', False) 
+    if include_stacking:
+        stacker = LogisticRegression()
+        # solvers = ['newton-cg', 'lbfgs', 'liblinear']
+        penalty = ['l1', 'l2']
+        c_values = np.logspace(-2, 2, 5)
+        grid = dict(penalty=penalty, C=c_values)
+
+        lh = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(R.T, L_train).predict(T.T)
+        perf_score = f1_score(L_test, lh) 
+        print(f'[result] Stacking: F1 score with the original T:  {perf_score}')
+
+        lh_new = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(Rh.T, L_train).predict(Th.T)
+        perf_score = f1_score(L_test, lh_new)
+        print(f'[result] Stacking: F1 score with re-estimated Th: {perf_score}')    
+
     return (lh, lh_new, p_threshold, p_threshold_new)
 
 def analyze_reconstruction(model, X, L, Pc, n_train, p_threshold=[], policy_threshold='fmax'): 
@@ -470,7 +490,7 @@ def analyze_reconstruction(model, X, L, Pc, n_train, p_threshold=[], policy_thre
 
     def analyze_reconstruction_core(L_test, unreliable_only=True): 
 
-        nonlocal p_threshold 
+        nonlocal p_threshold
 
         # Original data
         R, T = X[:,:n_train], X[:,n_train:]
@@ -495,26 +515,37 @@ def analyze_reconstruction(model, X, L, Pc, n_train, p_threshold=[], policy_thre
         print(f"[info] From R to Rh, delta(Frobenius norm)= {LA.norm(Rh-R, ord='fro')}")
         print(f"[info] From T to Th, delta(Frobenius norm)= {LA.norm(Th-T, ord='fro')}")
 
+        # Prediction: By majority vote
+        ####################################
         lh = uc.estimateLabels(T, L=[], p_th=p_threshold, pos_label=1) # "majority vote given proba thresholds" is the default strategy
         lh_new = uc.estimateLabels(Th, L=[], p_th=p_threshold_new, pos_label=1) # Use the re-estimated T to predict labels
         # lh_new = uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T to predict labels
         print(f"[info] How different are lh and lh_new? {distance.hamming(lh, lh_new)}")
   
         perf_score = f1_score(L_test, lh)
-        print(f'[result] F1 score with the original T:  {perf_score}')
+        print(f'[result] Majority vote: F1 score with the original T:  {perf_score}')
 
         perf_score = f1_score(L_test, lh_new) 
-        print(f'[result] F1 score with re-estimated Th: {perf_score}')
+        print(f'[result] Majority vote: F1 score with re-estimated Th: {perf_score}')
 
-        # model = LogisticRegression()
-        # # solvers = ['newton-cg', 'lbfgs', 'liblinear']
-        # penalty = ['l1', 'l2']
-        # c_values = np.logspace(-2, 2, 5)
+        # Prediction: By stacking
+        ####################################
+        stacker = LogisticRegression()
+        # solvers = ['newton-cg', 'lbfgs', 'liblinear']
+        penalty = ['l1', 'l2']
+        c_values = np.logspace(-2, 2, 5)
+        grid = dict(penalty=penalty, C=c_values)
 
-        # grid = dict(penalty=penalty,C=c_values)
-        # tuner = get_tuned_classifier(model, grid, n_splits=5, n_repeats=3)
-        # lh2 = tuner(R.T, L_train).predict(L_test)
+        # X_train, y_train = R.T, L_train
+        lh = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(R.T, L_train).predict(T.T)
+        perf_score = f1_score(L_test, lh) 
+        print(f'[result] Stacking: F1 score with the original T:  {perf_score}')
 
+        # X_train, y_train = Rh.T, L_train
+        lh_new = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(Rh.T, L_train).predict(Th.T)
+        perf_score = f1_score(L_test, lh_new)
+        print(f'[result] Stacking: F1 score with re-estimated Th: {perf_score}')       
+ 
         return 
     return analyze_reconstruction_core
 
