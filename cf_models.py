@@ -255,6 +255,38 @@ def predict_by_knn(model, model_knn, R, T, L_train, L_test, C, Pc, codes={}, pos
 
 # Loss functions
 ##########################################################################
+def c_square_loss(y_true, y_pred):
+
+    y_label = y_true[:, 0] # R[i][j] is the "label", which is a probability score in [0, 1]
+    weights = y_true[:, 1]
+    colors =  y_true[:, 2]
+    thresholds = y_true[:, 3]
+
+    mask_tp = tf.dtypes.cast( K.equal(colors, 2), dtype = tf.float32 )
+    mask_tn = tf.dtypes.cast( K.equal(colors, 1), dtype = tf.float32 )
+    mask_fp = tf.dtypes.cast( K.equal(colors,-2), dtype = tf.float32 )
+    mask_fn = tf.dtypes.cast( K.equal(colors,-1), dtype = tf.float32 )
+
+    # if TP, want y_pred >= y_true, i.e. the larger (the closer to 1), the better
+    loss_tp = weights * K.square(y_label-y_pred) 
+    # ... otherwise, the smaller the y_pred, the higher the penalty (quadratic)
+    
+    # if TN, want y_pred < y_true, i.e. the smaller (the closer to 0), the better
+    loss_tn = weights * K.square(y_label-y_pred) 
+
+    # if FP, y_pred must've been too large, want y_pred smaller, but how much smaller? well, it'd better be 
+    # smaller than the probability threshold (associated with the corresponding base classifier)
+    loss_fp = weights * K.square(K.maximum(y_pred-thresholds, 0)) # if y_pred < p_threshold => no loss
+    # loss_fp = weights * K.pow(K.maximum(y_true-y_pred, 0) # may need to be 'a lot' smaller => could penalize error cubically instead
+
+    # if FN, y_pred must've been too small, want y_pred larger; but it needs to be larger than the threshold to be helpful
+    loss_fn = weights * K.square(K.maximum(thresholds-y_pred, 0)) # if y_pred > p_threshold => no loss
+    # loss_fn = weights * K.pow(K.maximum(y_pred-y_true, 0), 3) # penalize cubically or any exponent > 2
+
+    wmse = K.mean(mask_tp * loss_tp + mask_tn * loss_tn + mask_fp * loss_fp + mask_fn * loss_fn)
+    return wmse
+
+
 def confidence_weighted_loss(y_true, y_pred): # this has to be used with .add_loss() with greater flexibility
     # from tensorflow.keras import backend as K    
     
@@ -262,12 +294,12 @@ def confidence_weighted_loss(y_true, y_pred): # this has to be used with .add_lo
     weights = y_true[:, 1]
     colors =  y_true[:, 2]
   
-    # condition
+    # Conditions
     mask_tp = tf.dtypes.cast( K.equal(colors, 2), dtype = tf.float32 )
     mask_tn = tf.dtypes.cast( K.equal(colors, 1), dtype = tf.float32 )
     mask_fp = tf.dtypes.cast( K.equal(colors,-2), dtype = tf.float32 )
     mask_fn = tf.dtypes.cast( K.equal(colors,-1), dtype = tf.float32 )
-    # Note: We also need to convert these masks to integer type so that we can use them to make the weighted sum
+    # Note: We also need to convert these masks to numeric type so that we can use them to make the weighted sum
 
     # if TP, want y_pred >= y_true, i.e. the larger (the closer to 1), the better
     loss_tp = weights * K.square(K.maximum(y_label-y_pred, 0)) # if y_pred > y_label => y_label-y_pred < 0 => no loss ...
@@ -284,7 +316,7 @@ def confidence_weighted_loss(y_true, y_pred): # this has to be used with .add_lo
     loss_fn = loss_tp 
     # loss_fn = weights * K.pow(K.maximum(y_pred-y_true, 0), 3) # penalize cubically or any exponent > 2
 
-    wmse = mask_tp * loss_tp + mask_tn * loss_tn + mask_fp * loss_fp + mask_fn * loss_fn
+    wmse = K.mean(mask_tp * loss_tp + mask_tn * loss_tn + mask_fp * loss_fp + mask_fn * loss_fn)
     return wmse
 
 def euclidean_distance(vects):
@@ -686,7 +718,8 @@ def train_model(model, input_data, **kargs):
     return model
 
 
-def demo_cfnet_with_csqr_loss(ctype='Cn', n_factors=50, alpha=10.0, conf_measure='brier', policy_threshold='fmax', data_dir='./data'): 
+def demo_cfnet_with_csqr_loss(loss_fn=None, ctype='Cn', n_factors=50, alpha=10.0, 
+                              conf_measure='brier', policy_threshold='fmax', data_dir='./data'): 
     import data_pipeline as dp 
     import utils_cf as uc
     from utils_sys import highlight
@@ -747,8 +780,11 @@ def demo_cfnet_with_csqr_loss(ctype='Cn', n_factors=50, alpha=10.0, conf_measure
     else: 
         C = C0
 
-    Xc, yc, weights, colors = dp.matrix_to_augmented_training_data(X, C, Pc) # NOTE: Don't overwrite X (`Xc` is not the same as `X`, which is a rating matrix)
-    yc = np.column_stack([yc, weights, colors])
+    # Xc, yc, weights, colors = dp.matrix_to_augmented_training_data(X, C, Pc) # NOTE: Don't overwrite X (`Xc` is not the same as `X`, which is a rating matrix)
+    # yc = np.column_stack([yc, weights, colors])
+
+    Xc, yc = dp.matrix_to_augmented_training_data2(X, C, Pc, p_threshold=p_threshold)
+    assert yc.shape[1] >= 3, f"Got n={yc.shape[1]} columns but `yc` should carry at least 3 attributes: (y_true, weight, color) and may include additional attributes"
 
     #----------------
     # test_size = 0.1
@@ -760,7 +796,8 @@ def demo_cfnet_with_csqr_loss(ctype='Cn', n_factors=50, alpha=10.0, conf_measure
         yc[:split_pt],
         yc[split_pt:])
 
-    loss_fn = confidence_weighted_loss
+    if loss_fn is None:
+        loss_fn = confidence_weighted_loss # Options: confidence_weighted_loss, c_square_loss
     
     n_users, n_items = X.shape
     model = get_cfnet_uncompiled(n_users, n_items, n_factors)

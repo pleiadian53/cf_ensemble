@@ -1505,7 +1505,7 @@ def estimateLabelMatrix(R, L=[], p_th=[], pos_label=1, neg_label=0, ratio_small_
 
     return Lh
 
-def estimateLabelsByKNN(R, T, L_train, Pc, topn=3, rank_fn=None, larger_is_better=True, **kargs): 
+def estimateLabelsByRanking(R, T, L_train, Pc, topn=3, rank_fn=None, larger_is_better=True, **kargs): 
     import utils_knn as uknn
     from knn_models import FaissKNN
 
@@ -1739,6 +1739,7 @@ def classPrior(L, labels=[0, 1], ratio_ref=0.1, verify=True, verbose=True):  # a
         ret['max_class'] = ret['majority_class'] = neg_label if rPos < rNeg else pos_label
 
         ret['r_max_to_min'] = ret['multiple'] = ret['n_max_class']/(ret['n_min_class']+0.0)
+        ret['r_min_to_max'] = ret['n_min_class']/(ret['n_max_class']+0.0)
         
         if min(rPos, rNeg) < ratio_ref:  # assuming pos labels are the minority
             if verbose: print('(class_prior) Imbalanced class distribution: n(+):{0}, n(-):{1}, r(+):{2}, r(-):{3}'.format(nPos, nNeg, rPos, rNeg))
@@ -2212,12 +2213,12 @@ def evalConfidenceMatrix(X, L=[], **kargs):
     params.update(shared_params)
 
     if verbose: 
-        div("(evalConfidenceMatrix) policy_filtering: {0}, policy_opt: {1} | conf_measure: {2} | policy_threshold: {3}, ratio_users: {4}, ratio_small_class: {5}, supervised? {6}, mask_all_test? {7} | alpha: {8}".format(policy, 
+        div("(evalConfidenceMatrix) policy_filtering: {0}, policy_opt: {1} | conf_measure: {2} | policy_threshold: {3}, ratio_users: {4}, ratio_small_class: {5}, supervised? {6}, mask_all_test? {7}".format(policy, 
                         policy_opt, 
                         params['conf_measure'], params['policy_threshold'], 
                         params['ratio_users'], params['ratio_small_class'], 
                         params['supervised'], params['mask_all_test'], 
-                        params['alpha']), symbol='=', border=2)
+                        ), symbol='=', border=2)  # params['alpha']: factored into balance_and_scale()
         if params['is_cascade']: 
             print('... Filtering policy in training split: {} =?= test split: {}'.format(policy, params['policy_test']))
         if params['policy_test'].startswith('po'):
@@ -2350,10 +2351,46 @@ def evalConfidenceMatrices(X, L, alpha=10.0, p_threshold=[], conf_measure='brier
 
     return (Pc, C0, Cw, Cn)
 
-def eval_confidence_given_color_matrix(X, L, alpha=10.0, p_threshold=[], conf_measure='brier', policy_threshold='fmax', **kargs): 
+def eval_confidence_given_color_matrix(X, L, Pc, alpha=10.0, p_threshold=[], conf_measure='brier', policy_threshold='fmax', **kargs): 
+    # from sklearn.metrics import brier_score_loss
 
+    # Color matrix should have (at least) 4 distinct values; could have other "colors" like neutrals representing ...
+    # ... entries with high uncertainty
+    uniq_colors = np.unique(Pc.A if sparse.issparse(Pc) else Pc)
+    assert len(uniq_colors) >= 4, f"n_colors: {uniq_colors}"
 
-    return
+    # Optional paramters 
+    # --------------------
+    U = kargs.get('U', list(range(X.shape[0]))) # user/classifier names; for messaging only
+    verbose = kargs.get('verbose', 0)
+    scoring_fn = kargs.get('scoring', brier_score_loss) # scoring function for confidence weight
+
+    # Compute considence scores that reflect quality of the predictions
+    # - confidence scores are later to be used in the optimization for deriving latent factors
+    ################################################################# 
+    C0 = confidence2D(X, L, mode=conf_measure, 
+                scoring=scoring_fn, # used only when `conf_measure` is not any of the pre-defined options like 'brier'. 
+
+                    # following params are used only when mode = 'ratio'
+                    p_threshold=p_threshold,  
+                    policy_threshold=policy_threshold, 
+                    verbose=verbose)  # don't return outer(wu, Wi) 
+
+    # Cw: A re-weighted (dense) confidence matrix in which confidence scores are adjusted to take into account 
+    #     the disparity in sample sizes (e.g. the size of TPs is usually much smaller than that of TNs in class-imbalanced data)
+    Cw = balance_and_scale(C0, X=X, L=L, Po=Pc, p_threshold=p_threshold, U=U, 
+                        alpha=alpha, conf_measure=conf_measure, n_train=n_train, verbose=verbose)
+
+    # Cn: A masked confidence matrix where the confidence scores associated with FPs and FNs are set to 0
+    Cn = mask_neutral_and_negative(C0, Pc, is_unweighted=False, weight_negative=0.0, sparsify=True)
+    Cn = balance_and_scale(Cn, X=X, L=L, Po=Pc, p_threshold=p_threshold, U=U, 
+                        alpha=alpha, conf_measure=conf_measure, n_train=n_train, verbose=verbose)
+    
+    # Test: Wherever Pc is negative, the corresponding entries in Cn must be 0 (By constrast, C is a full/dense confidence matrix)
+    assert np.all(Cn[Pc < 0]==0)
+    assert np.all(Cn[Pc > 0]>0)
+
+    return (Pc, C0, Cw, Cn)
 
 def analyzeMask(R, M, L, pos_label=1, neg_label=0):
     """
@@ -4153,7 +4190,6 @@ def toConfidenceMatrix(X, L, **kargs):
     ################################################################# 
     C0 = confidence2D(X, L, mode=conf_measure, 
                 scoring=kargs.get('scoring', brier_score_loss), 
-                outer_product=False, 
 
                     # following params are used only when mode = 'ratio'
                     p_threshold=p_threshold,  
@@ -4304,7 +4340,7 @@ def to_mean_vector(X, L, **kargs):
     # ... estimated labels ready L <- Lh
 
     # condition: masking FP, FN here? or compute confidence matrix first?
-    if fold == 0: print('(toMetaMatrix) compute conficence scores | conf_measure: {0}, outer_product? {1}'.format(kargs.get('conf_measure', 'brier'), False))
+    if fold == 0: print('(toMetaMatrix) compute conficence scores | conf_measure: {0}'.format(kargs.get('conf_measure', 'brier')))
     
     # Cui = sparse.csr_matrix.multiply(S, W) # hadamard product
     ### treat FP, FN as missing values

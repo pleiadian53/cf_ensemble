@@ -201,7 +201,7 @@ def make_sample_weights(R, C, Pc):
 
     return df_conf[col_value].values    
 
-def matrix_to_augmented_training_data2(R, C, Pc, **kargs): 
+def matrix_to_augmented_training_data2(R, C, Pc, *, p_threshold=[], **kargs): 
     assert R.shape == C.shape
     assert R.shape == Pc.shape 
 
@@ -235,6 +235,12 @@ def matrix_to_augmented_training_data2(R, C, Pc, **kargs):
     colors = df_color[col_color].values
     assert (len(weights) == N) and (len(colors) == N)
 
+    # probability thresholds
+    has_threshold = False
+    if len(p_threshold) > 0: 
+        thresholds = broadcast(R, p_threshold)
+        has_threshold = True
+
     # Shuffle the data
     shuffle = kargs.get('shuffle', False)
     random_state = kargs.get('random_state', 53)
@@ -242,9 +248,13 @@ def matrix_to_augmented_training_data2(R, C, Pc, **kargs):
         # np.random.seed(random_state)
         shuffler = np.random.RandomState(seed=random_state).permutation(N)
 
-        return (X[shuffler], np.column_stack([y[shuffler], weights[shuffler], colors[shuffler]]))
+        if has_threshold: 
+            return (X[shuffler], np.column_stack([ y[shuffler], weights[shuffler], colors[shuffler], thresholds[shuffler] ]))
+        return (X[shuffler], np.column_stack( [y[shuffler], weights[shuffler], colors[shuffler]] ))
 
-    return (X, np.column_stack(y, weights, colors)) # (X, y_augmented)-format
+    if has_threshold: 
+        return (X, np.column_stack([y, weights, colors, thresholds] ))
+    return (X, np.column_stack([y, weights, colors])) # (X, y_augmented)-format
 
 def matrix_to_augmented_training_data(R, C, Pc, **kargs):
     assert R.shape == C.shape
@@ -292,6 +302,23 @@ def matrix_to_augmented_training_data(R, C, Pc, **kargs):
 #[alias]
 def rating_matrix_to_augmented_training_data(R, C, Pc, **kargs): 
     return matrix_to_augmented_training_data(R, C, Pc, **kargs)
+
+def broadcast(R, v, **kargs):
+    # `v` is a vector of the same dimension as the row of R (R.shape[0])
+    # An example: probability thresholds or `p_threshold`
+
+    # As entries of R[i][j] get unraveled to a long vector of dimension R.size, 
+    # sometimes it may be desirable to match `v` with this long vector, meaning that 
+    # each vector component of v (vi) gets repeated R.shape[1] times
+
+    # This can be useful in constructing loss functions (e.g. the loss function 
+    # that takes into account probability thresholds)
+
+    assert len(v) == R.shape[0]
+    v_broadcast = np.hstack([np.repeat(v[i], R.shape[1]) for i in range(len(v))])
+    assert len(v_broadcast) == R.size
+
+    return v_broadcast
 
 def unravel(R, **kargs): 
     

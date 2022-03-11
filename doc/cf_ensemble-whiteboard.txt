@@ -1,4 +1,26 @@
 
+> eval_estimated_probability_filter(P, T, L_test, p_threshold, eps=1e-3) (v)
+> Notebook Part 3
+
+ratio_of_alignment2(
+
+>> Compute sum of hamming distances
+
+(v) pmodel.color_vectorl()
+
+# new C-sqr loss ()
+>> matrix_to_augmented_training_data(
+>> estimate_labels_by_ratio(
+
+estimateLabelsByRanking(
+
+
+utils_knn.estimate_labels_*
+######e###########################################################
+            # colors_sorted, counts = pmodel.sort_colors(Pc_i, reverse=True)
+            # positive_color_counts = [(color, counts[color]) for color in colors_sorted if color > 0]
+            # positive_sorted, counts = zip(*positive_color_counts)
+#################################################################
 
 if tEstimatedLabels and len(L_test) > 0: 
         accuracy = np.sum(lh == L_test) / (len(L_test)+0.0)

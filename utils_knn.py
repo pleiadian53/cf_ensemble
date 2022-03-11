@@ -14,12 +14,21 @@ from utilities import normalize
 import scipy.sparse as sparse
 # from sklearn.preprocessing import normalize
 
-# import knn_models
+# import knn_models # NOTE: importing this module requires 
 
 
 # Count-based methods 
 ################################################################
+
 def most_common_element_and_position(x, pos_key_only=True):
+    """
+
+    Parameters 
+    ----------
+    `x`: a 1D nd.array (e.g. a row vector of a color matrix)
+
+    """
+
     if len(x) == 0: 
         return (None, -1)
 
@@ -115,7 +124,192 @@ def analyze_knn(fknn, X_test, L_test, Pc, target_label=1):
     
     return
 
-# Similarity measure-related utilities
+
+def estimate_ratios(fknn, R, Pc, n_samples=30, codes={}, pos_label=1, neg_label=0, verbose=0, eps=1e-3):
+    """
+    Given the (fitted) kNN model, find the count ratio of colors among the subset of color matrix (Pc) 
+    associated the kNNs. Specifically, this function attempts to answer the following questions: 
+
+    For each training instance in (R) labeled positive, look into its kNNs and find the ratio of TP entries 
+    within the kNN-related part of the color matrix (i.e. column-subset of `Pc`). Similiarly, 
+    for each negative example, look into its kNN-associated color matrix and find the ratio of TNs. 
+
+    Whenever base classifiers predict positive, do we observe a TP-majority in color matrix (associated with the kNNs)? 
+    Whenever base classifiers predict negative, do we observe a TN-majority? 
+
+    Returns
+    -------
+    A dictionary that maps from labels (0 for negative, 1 for positive) to (mean) ratios. 
+
+    """
+
+    import polarity_models as pmodel 
+    import utils_cf as uc
+
+    if sparse.issparse(Pc): Pc = Pc.A
+    if len(codes) == 0: codes = pmodel.Polarity.codes
+
+    distances, indices = fknn.search(R.T) # fknn must have been fit
+
+    L_train = pmodel.color_matrix_to_labels(Pc)
+    indices_pos = np.where(L_train == pos_label)[0]
+    indices_neg = np.where(L_train == neg_label)[0]
+    indices_pos = np.random.choice(indices_pos, min(len(indices_pos), n_samples))
+    indices_neg = np.random.choice(indices_neg, min(len(indices_neg), n_samples))
+   
+    n_users, n_train = R.shape 
+    ratios = dict.fromkeys([pos_label, neg_label], [])
+
+    # Estimate ratio of colors in order to predict positive
+    for i in indices_pos: # foreach training instance labeled positive
+        self_knn_i = indices[i] # test point (i)'s k nearest neighbors in R (in terms of their indices)
+        Pc_i = Pc[:, self_knn_i]
+
+        counts = pmodel.count_colors(Pc_i)    
+        counts_positive = {color:count for color, count in counts.items() if color > 0} # Count only correct predictions TPs, TNs
+        
+        r = counts_positive[codes['tp']]/(counts_positive[codes['tn']]+counts_positive[codes['tp']]+eps)
+        ratios[pos_label].append(r)
+
+    # Estimate ratio of colors in order to predict negative
+    for i in indices_neg: # foreach training instance labeled positive
+        self_knn_i = indices[i] # test point (i)'s k nearest neighbors in R (in terms of their indices)
+        Pc_i = Pc[:, self_knn_i]
+
+        counts = pmodel.count_colors(Pc_i)    
+        counts_positive = {color:count for color, count in counts.items() if color > 0} # Count only correct predictions TPs, TNs
+        
+        r = counts_positive[codes['tn']]/(counts_positive[codes['tn']]+counts_positive[codes['tp']]+eps)
+        ratios[neg_label].append(r)
+
+    ratios[pos_label] = np.mean(ratios[pos_label])
+    ratios[neg_label] = np.mean(ratios[neg_label])
+
+    return ratios
+
+def estimate_labels_by_matching(fknn, R, Pc, p_threshold,
+                                pos_label=1, neg_label=0, verbose=0):
+    import polarity_models as pmodel 
+    import utils_cf as uc
+    from scipy.spatial import distance
+
+    if sparse.issparse(Pc): Pc = Pc.A
+    assert R.shape == Pc.shape
+
+    def vector_to_matrix_distance(v, X, distance_fn): 
+        return np.sum(distance_fn(v, X[:, j]) for j in range(X.shape[1])) 
+            
+    def matching_core(T): 
+        k_knn = fknn.k # the constant `k` of the kNN
+        distances, indices = fknn.search(T.T) # fknn must have been fit
+        n_users, n_test = T.shape
+
+        test_points = set(np.random.choice(range(n_test), 10)) # [test]
+        y_estimated = []
+        for i in range(n_test): # foreach test instance (i.e. each column in T => T[:, i])
+            idx_knn_i = indices[i] # test point (i)'s k nearest neighbors in R (in terms of their indices)
+            Pc_i = Pc[:, idx_knn_i].astype(int) # column-subset of the color matrix at kNN indices (at positions in R similar to this current test point)
+
+            # If the label were known, how good would the match be in terms of colors (according to a given distance measure)? 
+
+            y_i = 1
+            d_i = np.inf
+            history = [] # for testing only
+            for label in [1, 0, ]: 
+                # Get color vector reprsentation for each column vector of T, given the current labeling guess
+                ti_color = pmodel.color_vector(T[:, i], label=label, p_th=p_threshold) # if the label is ..., then its colors are ... 
+
+                # Compute sum of hamming distances
+                d_label = vector_to_matrix_distance(ti_color, Pc, distance_fn=distance.hamming)
+                history.append({'color': ti_color, 'label': label, 'distance': d_label})
+
+                if d_label < d_i: # sum-of-distance the smaller, the better
+                    d_i = d_label
+                    y_i = label
+
+            if verbose and (i in test_points): 
+                print(f"[info] Pc_i:\n{Pc_i}\n")
+                msg = ''
+                for h in history: 
+                    msg += f"... Label = {h['label']}\n"
+                    msg += f"... color(ti): {h['color']}\n" 
+                    msg += f"...... distance: {h['distance']}\n" 
+                print(msg); print('-' * 50)
+
+            y_estimated.append(y_i)
+        return y_estimated
+
+    return matching_core
+
+def estimate_labels_by_rank(fknn, T, Pc, topn=3, rank_fn=None, 
+                    larger_is_better=True, 
+                    pos_label=1, neg_label=0, 
+                    verbose=0):
+    import polarity_models as pmodel 
+
+    if sparse.issparse(Pc): Pc = Pc.A
+
+    # if T.shape[1] == Pc.shape[0]: # T wasn't being transposed 
+    #     T = T.T
+
+    if rank_fn is None: 
+        rank_fn = compute_entropy
+        larger_is_better = False
+    
+    k_knn = fknn.k # the constant `k` of the kNN
+    topn = min(k_knn, topn) # top `n` of the kNN (i.e. top of the top :)
+    
+    n_users, n_test = T.shape
+    distances, indices = fknn.search(T.T) # fknn must have been fit
+
+    test_points = set(np.random.choice(range(n_test), 10))
+    top_indices = []
+    lh = []
+    for i in range(n_test): 
+        idx_knn_i = indices[i] # test point (i)'s k nearest neighbors in R (in terms of their indices)
+        Pc_i = Pc[:, idx_knn_i].astype(int) # subset the color matrix at kNN indices
+
+        # Choose among top kNNs      
+        # [todo] Remove classifiers and kNNs that do not contribute to useful information (i.e. negative row-wise polarities and column-wise polarities)
+        
+        # Sort each kNN according to their entropy values
+        sorted_knn_i = sorted([(compute_entropy(Pc_i[:, j]), j) for j in range(k_knn)], 
+                                    reverse=larger_is_better)[:topn] # sort from small to large, entropy-wise
+
+        # [todo] Assign (normalized) weights to each kNN based on the rank function
+
+        # Get the global indices (wrt Pc) of the top N kNNs
+        top_knn_i = [ idx_knn_i[knn_ij[1]] for knn_ij in sorted_knn_i]  #  idx_knn_i[j]
+        top_indices.append(top_knn_i)
+        # Note: knn_ij[1] is the index within Pc_i => idx_knn_i[knn_ij[1]] is the position in Pc
+
+        top_knn_ij = [knn_ij[1] for knn_ij in sorted_knn_i]
+        L_knn = pmodel.color_matrix_to_labels( Pc_i[:, top_knn_ij] )
+        assert len(L_knn) == len(sorted_knn_i)
+
+        if verbose and (i in test_points): 
+            print(f"[info] Pc_{i}:\n{Pc_i}\n")
+            print(f"[info] sorted_knn_i (n={topn}):\n{sorted_knn_i}\n")
+            assert set(top_knn_i) <= set(idx_knn_i)
+            print(f"[info] top_knn_i:\n{top_knn_i}\n")
+            print(f"[info] L_knn(n={topn}): {L_knn}")
+            print(f"..... top_knn_ij: {top_knn_ij}")
+            print(f"..... Pc_{i} local:\n{Pc_i[:, top_knn_ij]}\n")
+  
+        # [todo] Weighted voting? 
+        lh.append(most_common_element(L_knn, pos_key_only=True))
+
+
+    # for u in range(n_users): 
+    #     color, pos = uknn.most_common_element_and_position(Pc_i[u, :], pos_key_only=True)
+    #     max_colors.append(color)
+    #     max_indices.append(knn_idx[pos]) # we want the knn index
+    #     X_knn_best = dp.zip_user_item_pairs(T, item_ids=max_indices)
+
+    return np.array(lh), np.array(top_indices)
+
+
+# Information-theoretic utilities
 ################################################################
 
 def compute_impurity(feature, impurity_criterion='entropy', base=2):
@@ -205,72 +399,8 @@ def compute_entropy(v, base=2): # [todo] efficiency
 
     return entropy(probs, base=base)
 
-def estimate_labels_by_rank(fknn, T, Pc, topn=3, rank_fn=None, 
-                    larger_is_better=True, 
-                    pos_label=1, neg_label=0, 
-                    verbose=0):
-    import polarity_models as pmodel 
-
-    if sparse.issparse(Pc): Pc = Pc.A
-
-    # if T.shape[1] == Pc.shape[0]: # T wasn't being transposed 
-    #     T = T.T
-
-    if rank_fn is None: 
-        rank_fn = compute_entropy
-        larger_is_better = False
-    
-    k_knn = fknn.k # the constant `k` of the kNN
-    topn = min(k_knn, topn) # top `n` of the kNN (i.e. top of the top :)
-    
-    n_users, n_test = T.shape
-    distances, indices = fknn.search(T.T) # fknn must have been fit
-
-    test_points = set(np.random.choice(range(n_test), 10))
-    top_indices = []
-    lh = []
-    for i in range(n_test): 
-        idx_knn_i = indices[i] # test point (i)'s k nearest neighbors in R (in terms of their indices)
-        Pc_i = Pc[:, idx_knn_i].astype(int) # subset the color matrix at kNN indices
-
-        # Choose among top kNNs      
-        # [todo] Remove classifiers and kNNs that do not contribute to useful information (i.e. negative row-wise polarities and column-wise polarities)
-        
-        # Sort each kNN according to their entropy values
-        sorted_knn_i = sorted([(compute_entropy(Pc_i[:, j]), j) for j in range(k_knn)], 
-                                    reverse=larger_is_better)[:topn] # sort from small to large, entropy-wise
-
-        # [todo] Assign (normalized) weights to each kNN based on the rank function
-
-        # Get the global indices (wrt Pc) of the top N kNNs
-        top_knn_i = [ idx_knn_i[knn_ij[1]] for knn_ij in sorted_knn_i]  #  idx_knn_i[j]
-        top_indices.append(top_knn_i)
-        # Note: knn_ij[1] is the index within Pc_i => idx_knn_i[knn_ij[1]] is the position in Pc
-
-        top_knn_ij = [knn_ij[1] for knn_ij in sorted_knn_i]
-        L_knn = pmodel.color_matrix_to_labels( Pc_i[:, top_knn_ij] )
-        assert len(L_knn) == len(sorted_knn_i)
-
-        if verbose and (i in test_points): 
-            print(f"[info] Pc_{i}:\n{Pc_i}\n")
-            print(f"[info] sorted_knn_i (n={topn}):\n{sorted_knn_i}\n")
-            assert set(top_knn_i) <= set(idx_knn_i)
-            print(f"[info] top_knn_i:\n{top_knn_i}\n")
-            print(f"[info] L_knn(n={topn}): {L_knn}")
-            print(f"..... top_knn_ij: {top_knn_ij}")
-            print(f"..... Pc_{i} local:\n{Pc_i[:, top_knn_ij]}\n")
-  
-        # [todo] Weighted voting? 
-        lh.append(most_common_element(L_knn, pos_key_only=True))
-
-
-    # for u in range(n_users): 
-    #     color, pos = uknn.most_common_element_and_position(Pc_i[u, :], pos_key_only=True)
-    #     max_colors.append(color)
-    #     max_indices.append(knn_idx[pos]) # we want the knn index
-    #     X_knn_best = dp.zip_user_item_pairs(T, item_ids=max_indices)
-
-    return np.array(lh), np.array(top_indices)
+# Similarity measure-related utilities
+################################################################
 
 def pairwise_similarity0(ratings, kind='user'):
     """
