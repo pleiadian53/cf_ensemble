@@ -4,6 +4,9 @@
 
 ratio_of_alignment2(
 
+
+>> predict_by_knn()
+
 >> Compute sum of hamming distances
 
 (v) pmodel.color_vectorl()

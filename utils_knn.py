@@ -16,6 +16,65 @@ import scipy.sparse as sparse
 
 # import knn_models # NOTE: importing this module requires 
 
+# General kNN utilitis 
+################################################################
+def predict_by_knn(model, indices, Pc): 
+    """
+    
+    Parameters 
+    ----------
+    `model`: A CFNet-based model that supports `predict(X)` method call, where `X` must be 
+             in the user-item-pair format: (user_id, item_id)
+    `T`: Probability/rating matrix of the test set 
+   
+    """
+    import data_pipeline as dp
+    from tqdm import tqdm
+
+    def predict_core(T, eps=1e-5): 
+
+        n_users, n_test = T.shape 
+
+        # T_avg = np.zeros_like(T)
+        Th = T_masked_avg = np.zeros_like(T)
+        # T_adj_masked_avg = np.zeros_like(T)
+        for i in tqdm(range(n_test)):  # foreach position in the test split (T)
+            knn_idx = knn_indices[i] # test point (i)'s k nearest neighbors in R (in terms of their indices)
+            # knn_idx = top_indices[i]
+
+            Pc_i = Pc[:, knn_idx].astype(int) # subset the color matrix at kNN indices
+
+            # Compute the mask within these kNN part of the training data
+            M = np.zeros_like(Pc_i)
+            M[Pc_i > 0] = 1 # polarity > 0 => correct predictions (either TP or TN) => keep their re-estimated values by setting these entries to 1s
+      
+            # Get re-estimated values for the kNN (of test instance)
+            X_knn = dp.make_user_item_pairs(T, item_ids=knn_idx) # structure k-NN in user-item-pair format for CFNet-based models
+            # assert X_knn.shape[0] == Pc_i.size 
+            
+            y_knn = model.predict(X_knn)
+            T_knn = y_knn.reshape((n_users, len(knn_idx))) # use len(knn_idx) instead of `k` for the flexibility of selecting fewer candidates
+            
+            # if i == 10: print(f"[test] knn_idx: {knn_idx}"); print(f"[test] X_knn:\n{X_knn}\n"); print(f"[test] T_knn:\n{T_knn}\n") 
+            # assert T_knn.shape[1] <= k, f"T_knn[1] == k(NN): {k} but got {T_knn.shape[1]}"
+            # assert T_knn.shape == Pc_i.shape, f"T_knn is a n_users-by-k matrix but got shape: {T_knn.shape}"
+            
+            # Take column-wise average: use the average across the re-estimated kNNs
+            # ti_knn_avg = np.mean(T_knn, axis=1) # take column-wise average (i.e. for each user, take the average among kNNs)
+            # T_avg[:, i] = ti_knn_avg
+
+            ti_knn_masked_avg = (M * T_knn).sum(1)/(M.sum(1)+eps) # average from non-zero entries only
+            T_masked_avg[:, i] = ti_knn_masked_avg
+
+            # Adjusted Masked Average: Consider degenerative cases in which, for a given base classifier, 
+            #           NONE of its predictions in these kNNs are correct
+            #           - It's possible that some classifiers never made correct predictions in the context of these kNNs
+            #           - Set a default value if that's the case (e.g. average)
+            # Th[:, i] = np.where(ti_knn_masked_avg == 0, ti_knn_avg, ti_knn_masked_avg)
+
+        return Th
+    return predict_core
+
 
 # Count-based methods 
 ################################################################
@@ -123,7 +182,6 @@ def analyze_knn(fknn, X_test, L_test, Pc, target_label=1):
     print(f"[info] Found {n_diff_knns} cases for which the majority 'color' does not come from the same training instance")
     
     return
-
 
 def estimate_ratios(fknn, R, Pc, n_samples=30, codes={}, pos_label=1, neg_label=0, verbose=0, eps=1e-3):
     """

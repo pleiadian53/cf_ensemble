@@ -144,9 +144,6 @@ def predict_by_knn(model, model_knn, R, T, L_train, L_test, C, Pc, codes={}, pos
     Pc: color matrix of the training split  
 
     """ 
-    import utils_knn as uknn
-    import data_pipeline as dp
-
     if verbose: np.set_printoptions(precision=3, edgeitems=5, suppress=True)
 
     # Convert rating matrices back to typical ML training set format
@@ -164,7 +161,7 @@ def predict_by_knn(model, model_knn, R, T, L_train, L_test, C, Pc, codes={}, pos
 
     if len(codes) == 0: codes = Polarity.codes
 
-    if sparse.issparse(Pc): Pc = Pc.A #
+    if is_sparse(Pc): Pc = Pc.A #
 
     # Infer true labels (L_train) from color matrix
     L_train = pmodel.color_matrix_to_labels(Pc, codes=codes) # True labels for R
@@ -172,6 +169,7 @@ def predict_by_knn(model, model_knn, R, T, L_train, L_test, C, Pc, codes={}, pos
     col_user, col_item, col_value = 'user', 'item', 'rating'
 
     Th = np.zeros_like(T, dtype='float32') # Initialize the re-estimated test set (Th) for T
+    T_knn_best = np.zeros_like(T, dtype='float32')
     T_avg = np.zeros_like(T, dtype='float32')
     T_masked_avg = np.zeros_like(T, dtype='float32')
     Th_reliable = np.zeros_like(T, dtype='float32') # unreliable entries are marked by special number (e.g. 0)
@@ -179,18 +177,23 @@ def predict_by_knn(model, model_knn, R, T, L_train, L_test, C, Pc, codes={}, pos
     T_pred = {} # keep track of various predictied outputs according to different strategies
     T_pred['knn_max'] = []
 
+    # kNN top of the top (rank kNNs further by their entropy values, the smaller the better)
+    # L_knn, top_indices = uknn.estimate_labels_by_rank(model_knn, T, Pc, topn=min(3, k), 
+    #                                                    rank_fn=uknn.compute_entropy, 
+    #                                                    larger_is_better=False, 
+    #                                                    verbose=0)
     msg = ''
-    for i in range(N):  # foreach position in the test split (T)
+    test_points = np.random.choice(range(N), 10)
+    for i in tqdm(range(N)):  # foreach position in the test split (T)
         knn_idx = knn_indices[i] # test point (i)'s k nearest neighbors in R (in terms of their indices)
+        # knn_idx = top_indices[i]
 
         Pc_i = Pc[:, knn_idx].astype(int) # subset the color matrix at kNN indices
 
-        # kNN's labels 
-        L_knn = pmodel.color_matrix_to_labels(Pc_i, codes=codes)
-        assert len(L_knn) == k
-
-        # Predicted label by majority vote (within kNN's corresponding labels)
-        ti_knn_max = np.argmax( np.bincount(L_knn) ) # kNN-predicted label by majority vote
+        # Method #1 Majority vote: Use the label determined by majority vote within kNNs
+        L_knn_i = pmodel.color_matrix_to_labels(Pc_i, codes=codes) # kNN's labels
+        ti_knn_max = np.argmax( np.bincount(L_knn_i) ) # kNN-predicted label by majority vote
+        # ti_knn_max = L_knn[i]
         T_pred['knn_max'].append(ti_knn_max)
 
         # Gather statistics
@@ -211,40 +214,56 @@ def predict_by_knn(model, model_knn, R, T, L_train, L_test, C, Pc, codes={}, pos
             msg += f"> Pc_i(shape={Pc_i.shape}):\n{Pc_i}\n"
             msg += f"> L_knn(size={len(L_knn)}):\n{L_knn}\n"
             msg += f"> label prediction (knn) => {ti_knn_max}\n"
-        
-        # Mask for these kNN part of the training data
-        M = np.zeros_like(Pc_i) # np.repeat(Li, Pc_i.size).reshape(Pc_i.shape)
 
+        # Method #2 Best uses: foreach base classifier predictio in ti, use the "best" among these kNNs (majority vote followed by restiamte)
+        max_colors, max_indices = [], []
+        for u in range(n_users): 
+            color, pos = uknn.most_common_element_and_position(Pc_i[u, :], pos_key_only=True)
+            max_colors.append(color)
+            max_indices.append(knn_idx[pos]) # we want the knn index
+        X_knn_best = dp.zip_user_item_pairs(T, item_ids=max_indices)
+        y_knn_best = model.predict(X_knn_best)
+        T_knn_best[:, i] = np.squeeze(y_knn_best, axis=-1)
+        
+        # Compute the mask within these kNN part of the training data
+        M = np.zeros_like(Pc_i) # np.repeat(Li, Pc_i.size).reshape(Pc_i.shape)
         M[Pc_i > 0] = 1 # polarity > 0 => correct predictions (either TP or TN) => keep their re-estimated values by setting these entries to 1s
+        
         # ... polarity < 0 => incorrect predictions => discard by setting them to 0s
 
         # Get re-estimated values for the kNN (of test instance)
-        X_knn = dp.make_user_item_pairs(T, item_ids=knn_idx) # structure k-NN in user-item-pair format 
+        X_knn = dp.make_user_item_pairs(T, item_ids=knn_idx) # structure k-NN in user-item-pair format for CFNet-based models
         assert X_knn.shape[0] == Pc_i.size
         y_knn = model.predict(X_knn)
-        X_knn[col_value] = y_knn
-        T_knn = X_knn.pivot(col_user, col_item, col_value).values
-        assert T_knn.shape[0] == n_users, f"T_knn[0] == n_users: {n_users} but got {T_knn.shape[0]}"
-        assert T_knn.shape[1] == k, f"T_knn[1] == k(NN): {k} but got {T_knn.shape[1]}"
+        T_knn = y_knn.reshape((n_users, len(knn_idx))) # use len(knn_idx) instead of `k` for the flexibility of selecting fewer candidates
+        
+        # if i == 10: print(f"[test] knn_idx: {knn_idx}"); print(f"[test] X_knn:\n{X_knn}\n"); print(f"[test] T_knn:\n{T_knn}\n") 
+        assert T_knn.shape[1] <= k, f"T_knn[1] == k(NN): {k} but got {T_knn.shape[1]}"
         assert T_knn.shape == Pc_i.shape, f"T_knn is a n_users-by-k matrix but got shape: {T_knn.shape}"
         
-        # Reestiamted values for ith test instance (ti) in T
-        ti_knn_avg = np.mean(T_knn, axis=1)
+        # Method #3 Column Average: Use the average across the re-estimated kNNs
+        ti_knn_avg = np.mean(T_knn, axis=1) # take column-wise average (i.e. for each user, take the average among kNNs)
         T_avg[:, i] = ti_knn_avg
 
-        # Reestimated values for ith test instance (ti) wrt ONLY those with positive polarity (i.e. averaging from TPs or TNs)
-        ti_knn_masked_avg = (M*T_knn).sum(1)/M.sum(1) # average from non-zero entries only
+        # Method #4 Masked Average: Use the reestimated values w.r.t ONLY those with positive polarity (i.e. averaging from TPs or TNs)
+        eps = 1e-4
+        ti_knn_masked_avg = (M*T_knn).sum(1)/(M.sum(1)+eps) # average from non-zero entries only
         T_masked_avg[:, i] = ti_knn_masked_avg
 
-        # It's possible that a subset of the classifiers never made correct predictions in the context of these kNNs
-        # Set a default value if that's the case (e.g. average)
+        # Method #5 Adjusted Masked Average: Consider degenerative cases in which, for a given base classifier, 
+        #           NONE of its predictions in these kNNs are correct
+        #           - It's possible that some classifiers never made correct predictions in the context of these kNNs
+        #           - Set a default value if that's the case (e.g. average)
         Th[:, i] = np.where(ti_knn_masked_avg == 0, ti_knn_avg, ti_knn_masked_avg)
+        
+        # Method #6: Mark unreliable entries by -1 (and apply a post-hoc method to Th); post-hoc method is yet to be defined
         Th_reliable[:, i] =  np.where(ti_knn_masked_avg == 0, -1, ti_knn_masked_avg)
 
-    T_pred['T_avg'] = T_avg
-    T_pred['T_masked_avg'] = T_masked_avg
-    T_pred['Th'] = Th
-    T_pred['Th_reliable'] = Th_reliable   
+    T_pred['T_knn_best'] = T_knn_best # best users
+    T_pred['T_avg'] = T_avg # average
+    T_pred['T_masked_avg'] = T_masked_avg # masked average
+    T_pred['Th'] = Th # adjusted masked average
+    T_pred['Th_reliable'] = Th_reliable # -1
 
     if verbose: 
         print(f"[info] Number of unreliable kNN cases: {n_unreliable_knn_cases}") 
@@ -268,11 +287,13 @@ def c_square_loss(y_true, y_pred):
     mask_fn = tf.dtypes.cast( K.equal(colors,-1), dtype = tf.float32 )
 
     # if TP, want y_pred >= y_true, i.e. the larger (the closer to 1), the better
-    loss_tp = weights * K.square(y_label-y_pred) 
+    loss_tp = weights * K.square(K.maximum(y_label-y_pred, 0)) # if y_pred > y_label => y_label-y_pred < 0 => no loss ...
+    # loss_tp = weights * K.square(y_label-y_pred) 
     # ... otherwise, the smaller the y_pred, the higher the penalty (quadratic)
     
     # if TN, want y_pred < y_true, i.e. the smaller (the closer to 0), the better
-    loss_tn = weights * K.square(y_label-y_pred) 
+    loss_tn = weights * K.square(K.maximum(y_pred-y_label, 0)) # if y_label > y_pred => y_pred-y_true < 0 => no loss
+    # loss_tn = weights * K.square(y_label-y_pred) 
 
     # if FP, y_pred must've been too large, want y_pred smaller, but how much smaller? well, it'd better be 
     # smaller than the probability threshold (associated with the corresponding base classifier)
@@ -468,6 +489,7 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
 
     # [todo] Try different strategies of reducing T to label predictions
     lh = uc.estimateLabels(T, L=[], p_th=p_threshold, pos_label=1) # "majority vote given proba thresholds" is the default strategy
+    lh_new_orig_pth = uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T and original p_th to predict labels
     lh_new = uc.estimateLabels(Th, L=[], p_th=p_threshold_new, pos_label=1) # Use the re-estimated T to predict labels
 
     print(f"[info] How different are lh and lh_new? {distance.hamming(lh, lh_new)}")
@@ -476,6 +498,9 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
     ####################################
     perf_score = f1_score(L_test, lh)
     print(f'[result] F1 score with the original T:  {perf_score}')
+
+    perf_score = f1_score(L_test, lh_new_orig_pth)
+    print(f'[result] F1 score with re-estimated Th using original p_threshold: {perf_score}')
 
     perf_score = f1_score(L_test, lh_new) 
     print(f'[result] F1 score with re-estimated Th: {perf_score}')
@@ -550,12 +575,16 @@ def analyze_reconstruction(model, X, L, Pc, n_train, p_threshold=[], policy_thre
         # Prediction: By majority vote
         ####################################
         lh = uc.estimateLabels(T, L=[], p_th=p_threshold, pos_label=1) # "majority vote given proba thresholds" is the default strategy
+        lh_new_orig_pth = uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T and original p_th to predict labels
         lh_new = uc.estimateLabels(Th, L=[], p_th=p_threshold_new, pos_label=1) # Use the re-estimated T to predict labels
         # lh_new = uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T to predict labels
         print(f"[info] How different are lh and lh_new? {distance.hamming(lh, lh_new)}")
   
         perf_score = f1_score(L_test, lh)
         print(f'[result] Majority vote: F1 score with the original T:  {perf_score}')
+
+        perf_score = f1_score(L_test, lh_new_orig_pth)
+        print(f'[result] Majority vote: F1 score with re-estimated Th using original p_threshold: {perf_score}')
 
         perf_score = f1_score(L_test, lh_new) 
         print(f'[result] Majority vote: F1 score with re-estimated Th: {perf_score}')
