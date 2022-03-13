@@ -527,12 +527,6 @@ def generate_imbalanced_data(class_ratio=0.95, verbose=1):
 
     X, y =  get_dataset(noise=True)
 
-    # Plot data
-    f, ax1 = plt.subplots(nrows=1, ncols=1,figsize=(20,8))
-    sns.scatterplot(X[:,0],X[:,1],hue=y,ax=ax1);
-    ax1.set_title("With Noise");
-    plt.show();
-
     uniq_labels = np.unique(y)
     n_classes = len(uniq_labels)
 
@@ -549,6 +543,13 @@ def generate_imbalanced_data(class_ratio=0.95, verbose=1):
 
     counter = Counter(y)
     if verbose: print(f'> counts:\n{counter}\n') 
+
+    # Plot data
+    f, ax1 = plt.subplots(nrows=1, ncols=1,figsize=(20,8))
+    sns.scatterplot(X[:,0],X[:,1],hue=y,ax=ax1);
+    ax1.set_title("With Noise");
+    plt.show();
+    
     return X, y
 
 def demo_data_processing():

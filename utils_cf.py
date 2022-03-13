@@ -10,6 +10,7 @@ from sys import argv
 import scipy
 import scipy.io
 # import scipy.stats as stats
+import scipy.sparse as sparse
 import numpy as np
 import pickle
 import timeit
@@ -1521,6 +1522,19 @@ def estimateLabelsByRanking(R, T, L_train, Pc, topn=3, rank_fn=None, larger_is_b
                         verbose=verbose)
     return lh
 
+def estimateLabelsByStacking(R, T, L_train, model, grid, **kargs): 
+    import utils_classifier as uclf
+    from sklearn.metrics import f1_score
+
+    verbose = kargs.get('verbose', 0)
+    y_pred = uclf.tune_model(model, grid, scoring='f1', verbose=verbose)(R.T, L_train).predict(T.T)
+    
+    # if verbose: 
+    #     print(f"> shape(y_pred): {y_pred.shape}")
+    #     perf_score = f1_score(y_test, y_pred)
+    #     print(f'[result] F1 score:  {perf_score}')
+    return y_pred
+
 def estimateLabels(T, L=[], p_th=[], Eu=[], pos_label=1, neg_label=0, M=None, labels=[], policy='', ratio_small_class=0, joint_model=None):
     """
     Estimate the labels based on the input rating matrix. 
@@ -2351,8 +2365,30 @@ def evalConfidenceMatrices(X, L, alpha=10.0, p_threshold=[], conf_measure='brier
 
     return (Pc, C0, Cw, Cn)
 
-def eval_confidence_given_color_matrix(X, L, Pc, alpha=10.0, p_threshold=[], conf_measure='brier', policy_threshold='fmax', **kargs): 
+def eval_confidence_given_color_matrix(X, L, Pc, *, alpha=10.0, p_threshold=[], conf_measure='brier', policy_threshold='fmax', **kargs): 
     # from sklearn.metrics import brier_score_loss
+
+    # Organize the input
+    n_train = kargs.get('n_train', -1)
+    if isinstance(X, (tuple, list)): 
+        R, T = X
+        n_train = R.shape[1]
+        X = np.hstack(X)
+    if isinstance(L, (tuple, list)): 
+        L_train, L_test_est = L 
+        assert len(L_train) == n_train
+        L = np.hstack(L)
+    if isinstance(Pc, (tuple, list)): 
+        Pc_train, Pc_test = Pc
+        assert (n_train == Pc_train.shape[1]) and (Pc_train.shape[0] == X.shape[0])
+        if sparse.issparse(Pc_train): Pc_train = Pc_train.A
+        if sparse.issparse(Pc_test): Pc_test = Pc_test.A       
+        Pc = np.hstack([Pc_train, Pc_test])
+    assert n_train != -1
+    
+    # Check consistency of data shape
+    assert Pc.shape == X.shape
+    if len(p_threshold) > 0: assert len(p_threshold) == X.shape[0]
 
     # Color matrix should have (at least) 4 distinct values; could have other "colors" like neutrals representing ...
     # ... entries with high uncertainty
@@ -2361,9 +2397,10 @@ def eval_confidence_given_color_matrix(X, L, Pc, alpha=10.0, p_threshold=[], con
 
     # Optional paramters 
     # --------------------
-    U = kargs.get('U', list(range(X.shape[0]))) # user/classifier names; for messaging only
     verbose = kargs.get('verbose', 0)
     scoring_fn = kargs.get('scoring', brier_score_loss) # scoring function for confidence weight
+    U = kargs.get('U', list(range(X.shape[0]))) # user/classifier names; for messaging only
+    assert len(U) == X.shape[0]
 
     # Compute considence scores that reflect quality of the predictions
     # - confidence scores are later to be used in the optimization for deriving latent factors
@@ -3413,7 +3450,7 @@ def mask_over_dual(C, X, L, ratio_users=0.5,
     return C, C_prime
 
 def shift(C, offset=-1.0):
-    import scipy.sparse as sparse
+    # import scipy.sparse as sparse
     if sparse.issparse(C): 
         C = C.todense() + offset
         return sparse.csr_matrix(C)
@@ -3452,7 +3489,7 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
 
 
     """
-    import scipy.sparse as sparse
+    # import scipy.sparse as sparse
    
     C_is_sparse = False
     if sparse.issparse(C): 
@@ -4051,7 +4088,7 @@ def toConfidenceMatrix(X, L, **kargs):
 
     # from sklearn.metrics import brier_score_loss
     from analyzer import uniform_box_sampler
-    import scipy.sparse as sparse
+    # import scipy.sparse as sparse
     from evaluate import findOptimalCutoff   #  p_th <- f(y_true, y_score, metric='fmax', pos_label=1)
     import collections
 
@@ -4278,7 +4315,7 @@ def to_mean_vector(X, L, **kargs):
                 print('... [%d] %s: p_th = %f' % (i+1, u, pth))
 
     # from sklearn.metrics import brier_score_loss
-    import scipy.sparse as sparse
+    # import scipy.sparse as sparse
     from evaluate import findOptimalCutoff   #  p_th <- f(y_true, y_score, metric='fmax', pos_label=1)
     import collections
 
@@ -5208,7 +5245,7 @@ def interpolate(X1, X2, W1, W2=None):
         toarray returns an ndarray; todense returns a matrix. If you want a matrix, use todense; otherwise, use toarray
 
     """
-    import scipy.sparse as sparse
+    # import scipy.sparse as sparse
     assert X1.shape == X2.shape == W1.shape
 
     # if not isinstance(W1, np.ndarray): W1 = W1.toarray( )  # W1 has to be in dense form

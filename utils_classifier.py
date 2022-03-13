@@ -187,6 +187,31 @@ def validate_crf_params(rs, output_path=None, dpi=300, save=True, verbose=True):
 # Model selection utilities 
 ###############################################################################################
 
+
+def hyperparameter_template(model='rf'):
+    
+    if model.lower() in ('rf', 'random forest'): 
+        n_estimators = [int(x) for x in np.linspace(start = 100, stop = 700, num = 50)]
+        max_features = ['auto', 'log2']  # Number of features to consider at every split
+        max_depth = [int(x) for x in np.linspace(10, 110, num = 11)]   # Maximum number of levels in tree
+        max_depth.append(None)
+        min_samples_split = [2, 5, 10]  # Minimum number of samples required to split a node
+        min_samples_leaf = [1, 4, 10]    # Minimum number of samples required at each leaf node
+
+        bootstrap = [True, False]       # Method of selecting samples for training each tree
+        # ... NOTE: Out of bag estimation only available if bootstrap=True
+
+        random_grid = {'n_estimators': n_estimators,
+                       'max_features': max_features,
+                       'max_depth': max_depth,
+                       'min_samples_split': min_samples_split,
+                       'min_samples_leaf': min_samples_leaf,
+                       'max_leaf_nodes': [None] + list(np.linspace(10, 50, 500).astype(int)), # 10 to 50 "inclusive"
+                       'bootstrap': bootstrap}
+    elif model.lower() in ('logis'): 
+        pass
+    return random_grid
+
 def tune_model(model, grid, cv=None, **kargs): 
     """
 
@@ -654,7 +679,7 @@ def demo_model_selection():
     # Define model
     model = RandomForestClassifier()
 
-    n_estimators = [10, 100, 1000]
+    n_estimators = [10, 100, 500, 1000]
     max_features = ['sqrt', 'log2']
     grid = dict(n_estimators=n_estimators,max_features=max_features)
 

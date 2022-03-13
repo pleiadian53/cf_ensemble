@@ -4653,6 +4653,8 @@ def eval_estimated_probability_filter(P, T, L_test, p_threshold, eps=1e-3):
     p_missed_fn = n_misaligned_fn/(n_reliable+eps) # Probability of predicting reliable but hitting FNs
     p_missed = (p_missed_fp+p_missed_fn)/(n_reliable+eps) # Probability of predicting reliable but hitting either FPs or FNs
 
+    ret['n_tp_hit'] = n_tp_hit
+    ret['n_tn_hit'] = n_tn_hit
     ret['precision_tp'] = precision_tp
     ret['precision_tn'] = precision_tn
     ret['precision'] = precision

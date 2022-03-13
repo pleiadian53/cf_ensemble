@@ -81,6 +81,9 @@ def confusion_matrix_fpr(labels, predictions, false_discovery_rate = 0.1):
     max_fpr_index = where(fpr >= false_discovery_rate)[0][0]
     print (sklearn.metrics.confusion_matrix(labels, predictions > thresholds[max_fpr_index]))
 
+def f_score(precision, recall, beta=1.0):
+    f_beta = (1 + beta**2) * (precision * recall) / ((beta**2 * precision) + recall) 
+    return f_beta
 
 def fmax_score(labels, predictions, beta = 1.0, pos_label = 1):
     """

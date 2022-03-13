@@ -255,7 +255,10 @@ def estimate_labels_by_matching(fknn, R, Pc, p_threshold,
     assert R.shape == Pc.shape
 
     def vector_to_matrix_distance(v, X, distance_fn): 
-        return np.sum(distance_fn(v, X[:, j]) for j in range(X.shape[1])) 
+        return np.sum(distance_fn(v, X[:, j]) for j in range(X.shape[1]))
+    def vector_to_matrix_match(v, X): 
+        # return positions of match if it exists; return empty array if not
+        return np.where(np.all(X == v.reshape(-1, 1),  axis=0))[0] 
             
     def matching_core(T): 
         k_knn = fknn.k # the constant `k` of the kNN
@@ -270,28 +273,38 @@ def estimate_labels_by_matching(fknn, R, Pc, p_threshold,
 
             # If the label were known, how good would the match be in terms of colors (according to a given distance measure)? 
 
-            y_i = 1
-            d_i = np.inf
+            y_i = 1 # default label
+            d_i = np.inf # default distance
+            n_i = 0 # default number of exact matches
             history = [] # for testing only
             for label in [1, 0, ]: 
                 # Get color vector reprsentation for each column vector of T, given the current labeling guess
                 ti_color = pmodel.color_vector(T[:, i], label=label, p_th=p_threshold) # if the label is ..., then its colors are ... 
 
-                # Compute sum of hamming distances
-                d_label = vector_to_matrix_distance(ti_color, Pc, distance_fn=distance.hamming)
-                history.append({'color': ti_color, 'label': label, 'distance': d_label})
-
-                if d_label < d_i: # sum-of-distance the smaller, the better
-                    d_i = d_label
-                    y_i = label
+                # Exact match(es) take precedence if they exist 
+                indices_exact_color_match = vector_to_matrix_match(ti_color, Pc_i)
+                n_matches = len(indices_exact_color_match)
+                if n_matches > 0: 
+                    d_label = 0 # set distance to 0 as exact matches when existent, takes precedence than partial matches
+                    if n_matches > n_i: # match existent but a small number may be a better sign 
+                        n_i = n_matches
+                        y_i = label 
+                else: 
+                    # Compute sum of hamming distances
+                    d_label = vector_to_matrix_distance(ti_color, Pc_i, distance_fn=distance.hamming)
+                    if d_label < d_i: # sum-of-distance the smaller, the better
+                        d_i = d_label
+                        y_i = label
+                history.append({'color': ti_color, 'label': label, 'distance': d_label, 'n_matches': n_matches})
 
             if verbose and (i in test_points): 
                 print(f"[info] Pc_i:\n{Pc_i}\n")
                 msg = ''
                 for h in history: 
                     msg += f"... Label = {h['label']}\n"
-                    msg += f"... color(ti): {h['color']}\n" 
-                    msg += f"...... distance: {h['distance']}\n" 
+                    msg += f"... Color(ti): {h['color']}\n" 
+                    msg += f"... N_matches(ti): {h['n_matches']}\n"
+                    msg += f"...... sum distances: {h['distance']}\n" 
                 print(msg); print('-' * 50)
 
             y_estimated.append(y_i)
