@@ -1522,17 +1522,27 @@ def estimateLabelsByRanking(R, T, L_train, Pc, topn=3, rank_fn=None, larger_is_b
                         verbose=verbose)
     return lh
 
-def estimateLabelsByStacking(R, T, L_train, model, grid, **kargs): 
+def estimateLabelsByStacking(model, grid, train_data, test_data, **kargs): 
     import utils_classifier as uclf
     from sklearn.metrics import f1_score
 
     verbose = kargs.get('verbose', 0)
-    y_pred = uclf.tune_model(model, grid, scoring='f1', verbose=verbose)(R.T, L_train).predict(T.T)
+    R, L_train = train_data.X, train_data.L
+    T = test_data.X
+ 
+    # Train and tune model on training data 
+    model = uclf.tune_model(model, grid, scoring='f1', verbose=verbose)(R.T, L_train)
+    y_pred = model.predict(T.T)
+    print(f"> shape(y_pred): {y_pred.shape}")
+    # y_pred = uclf.tune_model(model, grid, scoring='f1', verbose=verbose)(R.T, L_train).predict(T.T)
     
-    # if verbose: 
-    #     print(f"> shape(y_pred): {y_pred.shape}")
-    #     perf_score = f1_score(y_test, y_pred)
-    #     print(f'[result] F1 score:  {perf_score}')
+    if verbose: 
+        print(f"[estimateLabelsByStacking] Best parameters:\n{model.best_params_}\n")
+        y_test = test_data.L
+        if y_test is not None: 
+            scoring_fn = kargs.get('scoring_fn', f1_score)
+            perf_score = f1_score(y_test, y_pred)
+            print(f'[result] Performance score ({scoring_fn.__name__}):  {perf_score}')
     return y_pred
 
 def estimateLabels(T, L=[], p_th=[], Eu=[], pos_label=1, neg_label=0, M=None, labels=[], policy='', ratio_small_class=0, joint_model=None):
@@ -3574,11 +3584,13 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
     Wtn = C[ cells_tn ]
     Wfp = C[ cells_fp ]
     Wfn = C[ cells_fn ]
-    msg += '[info] Before re-weighting  TP(+) | 5 numbers: {}\n'.format(common.five_number(Wtp))
-    msg += '                            TN(-) | 5 numbers: {}\n'.format(common.five_number(Wtn))
-    msg += '                            FP(-) | 5 numbers: {}\n'.format(common.five_number(Wfp))
-    msg += '                            FN(+) | 5 numbers: {}\n'.format(common.five_number(Wfn))
-    if verbose: print(msg)
+
+    if verbose:
+        msg += '[info] Before re-weighting  TP(+) | 5 numbers: {}\n'.format(common.five_number(Wtp))
+        msg += '                            TN(-) | 5 numbers: {}\n'.format(common.five_number(Wtn))
+        msg += '                            FP(-) | 5 numbers: {}\n'.format(common.five_number(Wfp))
+        msg += '                            FN(+) | 5 numbers: {}\n'.format(common.five_number(Wfn))
+        print(msg)
     
     msg = ''
     Ntp = np.sum( cells_tp )  # all the weights ~ positive class 

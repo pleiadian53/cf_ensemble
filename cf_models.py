@@ -607,7 +607,7 @@ def analyze_reconstruction(model, X, L, Pc, n_train, p_threshold=[], policy_thre
         perf_score = f1_score(L_test, lh_new)
         print(f'[result] Stacking: F1 score with re-estimated Th: {perf_score}')       
  
-        return 
+        return Rh, Th, lh_new, p_threshold_new
     return analyze_reconstruction_core
 
 
@@ -624,6 +624,10 @@ def train_model(model, input_data, **kargs):
     alpha = kargs.get('alpha', 10.0)  # A scaling factor for the "implicit feedback," which in this case is the confidence scores 
     conf_measure = kargs.get('conf_measure', 'brier')  # measure of confidence of base predictors' probabilistic predictions
     policy_threshold = kargs.get('policy_threshold', 'fmax') # method for optimizing the probability threshold 
+    
+    label_estimator = kargs.get('label_estimator', uc.estimateLabels)
+    estimated_labels = kargs.get('lh', None)
+
     fold_number = 0
     test_size = 0.1
     ctype = kargs.get("ctype", 'Cn')
@@ -657,7 +661,12 @@ def train_model(model, input_data, **kargs):
 
     # b. Derived quantities
     p_threshold = uc.estimateProbThresholds(R, L=L_train, pos_label=1, policy=policy_threshold)
-    lh = uc.estimateLabels(T, p_th=p_threshold) # We cannot use L_test (cheating), but we have to guesstimate [1]
+
+    #####################
+    lh = estimated_labels
+    if lh is None: lh = uc.estimateLabels(T, p_th=p_threshold) # We cannot use L_test (cheating), but we have to guesstimate [1]
+    #####################
+
     L = np.hstack((L_train, lh)) 
     X = np.hstack((R, T))
     # Note: Remember to use "estimated labels" (lh) for the test set; not the true label (L_test)

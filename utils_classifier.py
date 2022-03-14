@@ -191,13 +191,13 @@ def validate_crf_params(rs, output_path=None, dpi=300, save=True, verbose=True):
 def hyperparameter_template(model='rf'):
     
     if model.lower() in ('rf', 'random forest'): 
-        n_estimators = [int(x) for x in np.linspace(start = 100, stop = 700, num = 50)]
-        max_features = ['auto', 'log2']  # Number of features to consider at every split
-        max_depth = [int(x) for x in np.linspace(10, 110, num = 11)]   # Maximum number of levels in tree
+        n_estimators = [100, 200, ] # [int(x) for x in np.linspace(start = 100, stop = 700, num = 50)]
+        max_features = ['auto', ] # ['auto', 'log2']  # Number of features to consider at every split
+        max_depth = [8, 10] # [int(x) for x in np.linspace(10, 110, num = 11)]   # Maximum number of levels in tree
         max_depth.append(None)
-        min_samples_split = [2, 5, 10]  # Minimum number of samples required to split a node
-        min_samples_leaf = [1, 4, 10]    # Minimum number of samples required at each leaf node
-
+        min_samples_split = [2, 4]  # Minimum number of samples required to split a node
+        min_samples_leaf = [1, ]    # Minimum number of samples required at each leaf node
+        max_leaf_nodes = [None,  ] # + [10, 25, 50] # [None] + list(np.linspace(10, 50, 500).astype(int)), # 10 to 50 "inclusive"
         bootstrap = [True, False]       # Method of selecting samples for training each tree
         # ... NOTE: Out of bag estimation only available if bootstrap=True
 
@@ -206,10 +206,15 @@ def hyperparameter_template(model='rf'):
                        'max_depth': max_depth,
                        'min_samples_split': min_samples_split,
                        'min_samples_leaf': min_samples_leaf,
-                       'max_leaf_nodes': [None] + list(np.linspace(10, 50, 500).astype(int)), # 10 to 50 "inclusive"
+                       'max_leaf_nodes': max_leaf_nodes, 
                        'bootstrap': bootstrap}
     elif model.lower() in ('logis'): 
-        pass
+        solvers = ['lbfgs', ] # ['newton-cg', 'lbfgs', 'liblinear']
+        penalty = ['l2', 'l1']
+        c_values = [100, 10, 1.0, 0.1, 0.01]
+        random_grid = dict(solver=solvers, penalty=penalty, C=c_values)
+    else: 
+        raise NotImplementedError(f"{model.capitalize()} not supported. Coming soon :)")
     return random_grid
 
 def tune_model(model, grid, cv=None, **kargs): 
@@ -228,10 +233,10 @@ def tune_model(model, grid, cv=None, **kargs):
         if cv is None: 
             random_state = kargs.get('random_state', 53)
             n_splits = kargs.get('n_splits', 5)
-            n_repeats = kargs.get('n_repeats', 3)
+            n_repeats = kargs.get('n_repeats', 2)
             cv = RepeatedStratifiedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=random_state)
         
-        grid_search = GridSearchCV(estimator=model, param_grid=grid, n_jobs=-1, cv=cv, scoring=scoring, error_score=0)
+        grid_search = GridSearchCV(estimator=model, param_grid=grid, n_jobs=-1, cv=cv, scoring=scoring, error_score=0, verbose=verbose)
         model_tuned = grid_result = grid_search.fit(X, y)
         
         # summarize results
@@ -268,10 +273,10 @@ def demo_logistic_regression_tuning():
     # define models and parameters
     #################################
     model = LogisticRegression()
-    solvers = ['newton-cg', 'lbfgs', 'liblinear']
-    penalty = ['l2']
+    solvers = ['lbfgs', ] # ['newton-cg', 'lbfgs', 'liblinear']
+    penalty = ['l2', 'l1', ]
     c_values = [100, 10, 1.0, 0.1, 0.01]
-    grid = dict(solver=solvers,penalty=penalty,C=c_values)
+    grid = dict(solver=solvers, penalty=penalty, C=c_values)
     #################################
 
     cv = RepeatedStratifiedKFold(n_splits=10, n_repeats=3, random_state=1)
