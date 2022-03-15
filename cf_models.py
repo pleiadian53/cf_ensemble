@@ -497,21 +497,21 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
 
     # [todo] Try different strategies of reducing T to label predictions
     lh = uc.estimateLabels(T, L=[], p_th=p_threshold, pos_label=1) # "majority vote given proba thresholds" is the default strategy
-    reestimated['lh_original_pth'] = lh_new_orig_pth = uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T and original p_th to predict labels
+    reestimated['lh_orig_pth'] = lh_new_orig_pth = uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T and original p_th to predict labels
     reestimated['lh'] = lh_new = uc.estimateLabels(Th, L=[], p_th=p_threshold_new, pos_label=1) # Use the re-estimated T to predict labels
 
     print(f"[info] How different are lh and lh_new? {distance.hamming(lh, lh_new)}")
 
     # Prediction: By majority vote
     ####################################
-    perf_score = f1_score(L_test, lh)
-    print(f'[result] F1 score with the original T:  {perf_score}')
+    reestimated['score_orig'] = f1_score(L_test, lh)
+    print(f"[result] F1 score with the original T:  {reestimated['score_orig']}")
 
-    perf_score = f1_score(L_test, lh_new_orig_pth)
-    print(f'[result] F1 score with re-estimated Th using original p_threshold: {perf_score}')
+    reestimated['score_lh_orig_pth'] = f1_score(L_test, lh_new_orig_pth)
+    print(f"[result] F1 score with re-estimated Th using original p_threshold: {reestimated['score_lh_orig_pth']}")
 
-    perf_score = f1_score(L_test, lh_new) 
-    print(f'[result] F1 score with re-estimated Th: {perf_score}')
+    reestimated['score_lh'] = perf_score = f1_score(L_test, lh_new) 
+    print(f"[result] F1 score with re-estimated Th: {reestimated['score_lh']}")
 
     # Prediction: By stacking
     ####################################
@@ -524,12 +524,12 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
         grid = dict(penalty=penalty, C=c_values)
 
         lh = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(R.T, L_train).predict(T.T)
-        perf_score = f1_score(L_test, lh) 
-        print(f'[result] Stacking: F1 score with the original T:  {perf_score}')
+        reestimated['score_orig_stacker'] = f1_score(L_test, lh) 
+        print(f"[result] Stacking: F1 score with the original T:  {reestimated['score_orig_stacker']}")
 
         lh_new = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(Rh.T, L_train).predict(Th.T)
-        perf_score = f1_score(L_test, lh_new)
-        print(f'[result] Stacking: F1 score with re-estimated Th: {perf_score}')    
+        reestimated['score_lh_stacker'] = f1_score(L_test, lh_new)
+        print(f"[result] Stacking: F1 score with re-estimated Th: {reestimated['score_lh_stacker']}")    
 
     return reestimated
 
@@ -562,29 +562,35 @@ def analyze_reconstruction(model, X, L, Pc, n_train=None, p_threshold=[], policy
     import utils_cf as uc
     from scipy.spatial import distance
 
+    # Original rating matrices 
+    # - (R, T, X)
+    if isinstance(X, (tuple, list)): 
+        R, T = X
+        n_train = R.shape[1] # infer training set size
+        X = np.hstack([R, T]) # X is modified hence nonlocal
+    else: 
+        assert n_train is not None
+        R, T = X[:,:n_train], X[:,n_train:]
+
+    # Labels: (L_train, lh, L)
+    if isinstance(L, (tuple, list)): 
+        L_train, lh = L
+        n_train = len(L_train) # infer training set size
+        L = np.hstack([L_train, lh]) # L is modified hence nonlocal
+    else: 
+        L_train, lh = L[:n_train], L[n_train:] # split L into L_train and lh; note that lh is NOT L_test 
+    
+    # Color matrix (Pc_train, Pc_test, Pc)
+    # if isinstance(Pc, (tuple, list)): 
+    #     Pc_train, Pc_test = Pc
+    #     Pc = np.hstack([Pc_train, Pc_test])
+
     def analyze_reconstruction_core(L_test, unreliable_only=True): 
 
-        nonlocal p_threshold, X, L, n_train
+        nonlocal p_threshold # X, L, n_train
         reestimated = {}
 
-        # Original data
-        if isinstance(X, (tuple, list)): 
-            R, T = X
-            n_train = R.shape[1]
-            X = np.hstack([R, T]) # X is modified hence nonlocal
-        else: 
-            assert n_train is not None
-            R, T = X[:,:n_train], X[:,n_train:]
-        if isinstance(L, (tuple, list)): 
-            L_train, lh = L
-            L = np.hstack([L_train, lh]) # L is modified hence nonlocal
-        else: 
-            L_train, lh = L[:n_train], L[n_train:] # split L into L_train and lh; note that lh is NOT L_test 
-        # if isinstance(Pc, (tuple, list)): 
-        #     Pc_train, Pc_test = Pc
-        #     Pc = np.hstack([Pc_train, Pc_test])
-
-        # New (level-1) data with probabilties reestimated
+        # New rating matrices (level-1) with probabilties reestimated
         ####################################
         if not unreliable_only: 
             # A. Reestimate entire matrix
@@ -606,17 +612,17 @@ def analyze_reconstruction(model, X, L, Pc, n_train=None, p_threshold=[], policy
         # Prediction: By majority vote
         ####################################
         lh = uc.estimateLabels(T, L=[], p_th=p_threshold, pos_label=1) # "majority vote given proba thresholds" is the default strategy
-        reestimated['lh_original_pth'] = lh_new_orig_pth = uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T and original p_th to predict labels
+        reestimated['lh_orig_pth'] = lh_new_orig_pth = uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T and original p_th to predict labels
         reestimated['lh'] = lh_new = uc.estimateLabels(Th, L=[], p_th=p_threshold_new, pos_label=1) # Use the re-estimated T to predict labels
         print(f"[info] How different are lh and lh_new? {distance.hamming(lh, lh_new)}")
 
-        perf_score = f1_score(L_test, lh)
+        reestimated['score_orig'] = perf_score = f1_score(L_test, lh)
         print(f'[result] Majority vote: F1 score with the original T:  {perf_score}')
 
-        perf_score = f1_score(L_test, lh_new_orig_pth)
+        reestimated['score_lh_orig_pth'] = perf_score = f1_score(L_test, lh_new_orig_pth)
         print(f'[result] Majority vote: F1 score with re-estimated Th using original p_threshold: {perf_score}')
 
-        perf_score = f1_score(L_test, lh_new) 
+        reestimated['score_lh'] = perf_score = f1_score(L_test, lh_new) 
         print(f'[result] Majority vote: F1 score with re-estimated Th: {perf_score}')
 
         # Prediction: By stacking
@@ -629,12 +635,12 @@ def analyze_reconstruction(model, X, L, Pc, n_train=None, p_threshold=[], policy
 
         # X_train, y_train = R.T, L_train
         lh = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(R.T, L_train).predict(T.T)
-        perf_score = f1_score(L_test, lh) 
+        reestimated['score_orig_stacker'] = perf_score = f1_score(L_test, lh) 
         print(f'[result] Stacking: F1 score with the original T:  {perf_score}')
 
         # X_train, y_train = Rh.T, L_train
         lh_new = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(Rh.T, L_train).predict(Th.T)
-        perf_score = f1_score(L_test, lh_new)
+        reestimated['score_lh_stacker'] = perf_score = f1_score(L_test, lh_new)
         print(f'[result] Stacking: F1 score with re-estimated Th: {perf_score}')       
  
         # Returns
@@ -643,8 +649,14 @@ def analyze_reconstruction(model, X, L, Pc, n_train=None, p_threshold=[], policy
         return reestimated 
     return analyze_reconstruction_core
 
+# Training pipeline utilities
+###########################################################################
+
 def prepare_training_data(X, C, Pc, p_threshold, target_type='generic'):
-    # Convert matrix format to user-item-pair format to feed into CFNet
+    """
+    Convert training data in matrix format (X, C, Pc) to user-item-pair format 
+    in order to feed them into CFNet. 
+    """
 
     import utils_cf as uc
     import data_pipeline as dp
@@ -747,13 +759,14 @@ def training_loop(input_model, input_data, **kargs):
     return model 
 
 def get_loss_function_name(loss_fn):
+    # Utility function for `training_pipeline()`
     try: 
         return loss_fn.__name__ # works only if loss_fn is a plain funciton, not wrapped in a class
     except: 
         pass 
     return loss_fn.__class__.__name__ # E.g. tf.keras.losses.MeanSquaredError() ~> `MeanSquaredError`
-
 def determine_target_type(loss_fn):
+    # Uitlity function for `training_pipeline()`
     loss_fn_name = get_loss_function_name(loss_fn)
     target_type = 'generic'
     if loss_fn_name.lower().find('entropy') > 0: 
@@ -761,7 +774,6 @@ def determine_target_type(loss_fn):
     if loss_fn_name.lower().startswith('meansquared') == 0: 
         return 'rating'
     return target_type
-    
 def training_pipeline(input_model, input_data, **kargs):
     """
 
@@ -950,6 +962,8 @@ def training_pipeline(input_model, input_data, **kargs):
 
     return model
 
+# Demo 
+#######################################################
 
 def demo_cfnet_with_csqr_loss(loss_fn=None, ctype='Cn', n_factors=50, alpha=10.0, 
                               conf_measure='brier', policy_threshold='fmax', data_dir='./data'): 
