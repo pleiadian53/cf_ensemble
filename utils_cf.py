@@ -3604,10 +3604,11 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
     w = sum([wtp, wtn, wfp, wfn])+0.0 # np.min([wtp, wtn, wfp, wfn])
     wtp, wtn, wfp, wfn = wtp/w, wtn/w, wfp/w, wfn/w
 
-    msg += "... Reweight C inversely proprotional to samples sizes >\n"
-    msg += f"... N (total): {N}"
-    msg += f"... wtp: {wtp}, wtn: {wtn}, wfp: {wfp}, wfn: {wfn}"
-    if verbose: print(msg)
+    if verbose: 
+        msg += "... Reweight C inversely proprotional to samples sizes >\n"
+        msg += f"... N (total): {N}"
+        msg += f"... wtp: {wtp}, wtn: {wtn}, wfp: {wfp}, wfn: {wfn}"
+        print(msg)
      
     # re-adjust confidence weights inversely proprotional to individual sample sizes
     C[ cells_tp ] = C[ cells_tp ] * wtp
@@ -3662,11 +3663,12 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
     Wfn = C[ cells_fn ]
 
     msg = ''
-    msg += '[info] After re-weighting  TP(+) | 5 numbers: {}\n'.format(common.five_number(Wtp))
-    msg += '                           TN(-) | 5 numbers: {}\n'.format(common.five_number(Wtn))
-    msg += '                           FP(-) | 5 numbers: {}\n'.format(common.five_number(Wfp))
-    msg += '                           FN(+) | 5 numbers: {}\n'.format(common.five_number(Wfn))      
-    if verbose: print(msg)   
+    if verbose: 
+        msg += '[info] After re-weighting  TP(+) | 5 numbers: {}\n'.format(common.five_number(Wtp))
+        msg += '                           TN(-) | 5 numbers: {}\n'.format(common.five_number(Wtn))
+        msg += '                           FP(-) | 5 numbers: {}\n'.format(common.five_number(Wfp))
+        msg += '                           FN(+) | 5 numbers: {}\n'.format(common.five_number(Wfn))      
+        print(msg)   
 
     # Scale confidence matrix collectively
     ###################################################

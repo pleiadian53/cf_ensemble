@@ -1,9 +1,94 @@
 
+
+
+
+# Todo 
+evalLabels(): use majority vote 
+also tried kNN 
+
+hyperparameter_template(model='rf')
+
+well, why dont we just jump start by using a stacker (v)
+
+RF stacker 
+{'bootstrap': True, 'max_depth': None, 'max_features': 'auto', 
+ 'max_leaf_nodes': None, 
+ 'min_samples_leaf': 1, 
+ 'min_samples_split': 2, 
+ 'n_estimators': 100}
+
+
+
+# Settings 
+- class skewness 
+  0.6
+  + at 0.75, the following settings has slight advantage but not significant
+  
+    (MSE) Reestimate the entire rating matrix (X) with learned latent factors/embeddings
+    (MSE) Reestimate ONLY the unreliable entries in X with learned latent factors/embeddings
+    
+    (BCE) same
+  
+    (C-Sqr) Reestimate ONLY the unreliable entries in X with learned latent factors/embeddings
+       + Cw 
+       + Majority vote: F1 score with re-estimated Th:
+    
+    (C-Sqr with Cn) Reestimate ONLY the unreliable entries in X with learned latent factors/embeddings
+       + Majority vote: F1 score with re-estimated Th:
+    (C-Sqr with Cw) Reestimate ONLY the unreliable entries in X with learned latent factors/embeddings
+       + Majority vote: F1 score with re-estimated Th:
+
+  
+  
+  0.9
+  0.95
+  0.99
+      MSE and BCE have advantage when estimating Xh using only reliable entries only
+      
+      kNN 
+      + (kNN) Masked Average: kNN-reestimate T using ONLY reliable entries
+      + (kNN) Adjusted Masked Average: kNN-reestimate T via 'interpolation'
+      
+================================================================================
+(BCE) Reestimate ONLY the unreliable entries in X with learned latent factors/embeddings
+================================================================================
+[info] From R to Rh, delta(Frobenius norm)= 68.13882447796267
+[info] From T to Th, delta(Frobenius norm)= 32.700659286412105
+[info] How different are lh and lh_new? 0.0128
+[result] Majority vote: F1 score with the original T:  0.19783616692426584
+[result] Majority vote: F1 score with re-estimated Th using original p_threshold: 0.19783616692426584
+[result] Majority vote: F1 score with re-estimated Th: 0.2003129890453834
+[result] Stacking: F1 score with the original T:  0.11188811188811189
+[result] Stacking: F1 score with re-estimated Th: 0.1979891724671307
+  
+
+# Observation 
+> When classes are more balanced, then majority vote makes more wrong guesses, leading to 
+  a degradation of performance: CF methods do not appear to have benefits in this case 
+  
+  However, kNN-based methods remain stable, making less errors in identifying reliable entries
+  => how does this translate into performance? 
+  
+> When classes are highly skewed, the majority vote makes less errors => this seems to be
+  leading to a better performance 
+  
+  kNN-based methods do not make a better guess for the reliable entries compared to majority vote 
+  however, the performance is not too bad either
+  
+> kNN-based methods more stable 
+  majority vote, better when classes are highly imbalanced (but maybe this is attributed to more 
+  TNs and getting them right inflates the accuracy)
+
+
+# Todo list
+
 > eval_estimated_probability_filter(P, T, L_test, p_threshold, eps=1e-3) (v)
 > Notebook Part 3
 
 ratio_of_alignment2(
 
+Pc_knn, Lh1 = pmodel.color_matrix(T, lh_knn, p_threshold) # Mc: Color matrix evaluated via estimated labels 
+Pf_knn = pmodel.to_preference(Pc_knn, neutral=0.0)
 
 >> predict_by_knn()
 

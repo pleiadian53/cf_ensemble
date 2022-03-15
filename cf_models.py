@@ -46,6 +46,10 @@ import scipy.sparse as sparse
 from utils_sys import highlight
 #################################################################
 
+# Plotting
+import matplotlib.pylab as plt
+# %matplotlib inline
+
 # Misc
 from pandas import DataFrame
 import numpy as np
@@ -54,6 +58,9 @@ import pprint
 import tempfile
 from typing import Dict, Text
 from collections import namedtuple
+
+# Progress
+from tqdm import tqdm
 
 # np.set_printoptions(precision=3, edgeitems=5, suppress=True)
 
@@ -274,7 +281,7 @@ def predict_by_knn(model, model_knn, R, T, L_train, L_test, C, Pc, codes={}, pos
 
 # Loss functions
 ##########################################################################
-def c_square_loss(y_true, y_pred):
+def c_squared_loss(y_true, y_pred):
 
     y_label = y_true[:, 0] # R[i][j] is the "label", which is a probability score in [0, 1]
     weights = y_true[:, 1]
@@ -454,7 +461,7 @@ def interpolate(X, Xh, Pc=None, C=None, L=[], p_threshold=[], use_confidence_wei
     return Xh_partial
 
 def analyze_reestimated_matrices(train, test, meta, **kargs): 
-    # use nametuple to represent the following:
+    # `train`, `test` and `meta` are namedtuples:
     # train: R, L_train 
     # test:  T, L_test 
     # p_policy: p_threshold, policy_threshold 
@@ -462,6 +469,8 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
     import data_pipeline as dp
     import utils_cf as uc
     from scipy.spatial import distance
+
+    reestimated = {}
 
     # Original data
     R, Rh, L_train = train.X, train.Xh, train.L # [add] train.Pc
@@ -475,11 +484,10 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
     p_threshold = uc.estimateProbThresholds(R, L=L_train, pos_label=1, policy=policy_threshold)
 
     # Re-estimate the p_threshold as well 
-    p_threshold_new = uc.estimateProbThresholds(Rh, L=L_train, pos_label=1, policy=policy_threshold)
+    reestimated['p_threshold'] = p_threshold_new = uc.estimateProbThresholds(Rh, L=L_train, pos_label=1, policy=policy_threshold)
 
     print(f"[info] From R to Rh, delta(Frobenius norm)= {LA.norm(Rh-R, ord='fro')}")
     print(f"[info] From T to Th, delta(Frobenius norm)= {LA.norm(Th-T, ord='fro')}")
-    
     print(f"[info] From `p_threshold(R)` to `p_threshold(Rh)`, delta(2-norm)= {LA.norm(p_threshold_new-p_threshold, 2)}")
     print(f"...    Original p_threshold:\n{p_threshold}\n")
     print(f"...    New p_threshold:\n{p_threshold_new}\n")
@@ -489,8 +497,8 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
 
     # [todo] Try different strategies of reducing T to label predictions
     lh = uc.estimateLabels(T, L=[], p_th=p_threshold, pos_label=1) # "majority vote given proba thresholds" is the default strategy
-    lh_new_orig_pth = uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T and original p_th to predict labels
-    lh_new = uc.estimateLabels(Th, L=[], p_th=p_threshold_new, pos_label=1) # Use the re-estimated T to predict labels
+    reestimated['lh_original_pth'] = lh_new_orig_pth = uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T and original p_th to predict labels
+    reestimated['lh'] = lh_new = uc.estimateLabels(Th, L=[], p_th=p_threshold_new, pos_label=1) # Use the re-estimated T to predict labels
 
     print(f"[info] How different are lh and lh_new? {distance.hamming(lh, lh_new)}")
 
@@ -523,9 +531,9 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
         perf_score = f1_score(L_test, lh_new)
         print(f'[result] Stacking: F1 score with re-estimated Th: {perf_score}')    
 
-    return (lh, lh_new, p_threshold, p_threshold_new)
+    return reestimated
 
-def analyze_reconstruction(model, X, L, Pc, n_train, p_threshold=[], policy_threshold='fmax'): 
+def analyze_reconstruction(model, X, L, Pc, n_train=None, p_threshold=[], policy_threshold='fmax'): 
     """
 
     Parameters 
@@ -540,6 +548,15 @@ def analyze_reconstruction(model, X, L, Pc, n_train, p_threshold=[], policy_thre
     Pc:    Color matrix 
     n_train: number of training instances; this parameter is used to split X into R and T
 
+    Returns 
+    -------
+    A dicitonary with keys representing reestimated quantities: 
+
+    Rh: 
+    Th:  
+    ratings: 
+    p_threshold: 
+
     """
     import data_pipeline as dp
     import utils_cf as uc
@@ -547,11 +564,25 @@ def analyze_reconstruction(model, X, L, Pc, n_train, p_threshold=[], policy_thre
 
     def analyze_reconstruction_core(L_test, unreliable_only=True): 
 
-        nonlocal p_threshold
+        nonlocal p_threshold, X, L, n_train
+        reestimated = {}
 
         # Original data
-        R, T = X[:,:n_train], X[:,n_train:]
-        L_train, lh = L[:n_train], L[n_train:] # split L into L_train and lh; note that lh is NOT L_test
+        if isinstance(X, (tuple, list)): 
+            R, T = X
+            n_train = R.shape[1]
+            X = np.hstack([R, T]) # X is modified hence nonlocal
+        else: 
+            assert n_train is not None
+            R, T = X[:,:n_train], X[:,n_train:]
+        if isinstance(L, (tuple, list)): 
+            L_train, lh = L
+            L = np.hstack([L_train, lh]) # L is modified hence nonlocal
+        else: 
+            L_train, lh = L[:n_train], L[n_train:] # split L into L_train and lh; note that lh is NOT L_test 
+        # if isinstance(Pc, (tuple, list)): 
+        #     Pc_train, Pc_test = Pc
+        #     Pc = np.hstack([Pc_train, Pc_test])
 
         # New (level-1) data with probabilties reestimated
         ####################################
@@ -562,12 +593,12 @@ def analyze_reconstruction(model, X, L, Pc, n_train, p_threshold=[], policy_thre
             # B. Reestimate only unreliable entries (better)
             Rh, Th = reestimate_unreliable_only(model, X, Pc=Pc, n_train=n_train)
         ####################################
+        reestimated['ratings'] = (Rh, Th)
 
         # Probability thresholds associated with the original training data (R)
         if len(p_threshold) == 0: p_threshold = uc.estimateProbThresholds(R, L=L_train, pos_label=1, policy=policy_threshold)
-
         # Re-estimate the p_threshold as well 
-        p_threshold_new = uc.estimateProbThresholds(Rh, L=L_train, pos_label=1, policy=policy_threshold)
+        reestimated['p_threshold'] = p_threshold_new = uc.estimateProbThresholds(Rh, L=L_train, pos_label=1, policy=policy_threshold)
 
         print(f"[info] From R to Rh, delta(Frobenius norm)= {LA.norm(Rh-R, ord='fro')}")
         print(f"[info] From T to Th, delta(Frobenius norm)= {LA.norm(Th-T, ord='fro')}")
@@ -575,11 +606,10 @@ def analyze_reconstruction(model, X, L, Pc, n_train, p_threshold=[], policy_thre
         # Prediction: By majority vote
         ####################################
         lh = uc.estimateLabels(T, L=[], p_th=p_threshold, pos_label=1) # "majority vote given proba thresholds" is the default strategy
-        lh_new_orig_pth = uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T and original p_th to predict labels
-        lh_new = uc.estimateLabels(Th, L=[], p_th=p_threshold_new, pos_label=1) # Use the re-estimated T to predict labels
-        # lh_new = uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T to predict labels
+        reestimated['lh_original_pth'] = lh_new_orig_pth = uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T and original p_th to predict labels
+        reestimated['lh'] = lh_new = uc.estimateLabels(Th, L=[], p_th=p_threshold_new, pos_label=1) # Use the re-estimated T to predict labels
         print(f"[info] How different are lh and lh_new? {distance.hamming(lh, lh_new)}")
-  
+
         perf_score = f1_score(L_test, lh)
         print(f'[result] Majority vote: F1 score with the original T:  {perf_score}')
 
@@ -607,41 +637,212 @@ def analyze_reconstruction(model, X, L, Pc, n_train, p_threshold=[], policy_thre
         perf_score = f1_score(L_test, lh_new)
         print(f'[result] Stacking: F1 score with re-estimated Th: {perf_score}')       
  
-        return Rh, Th, lh_new, p_threshold_new
+        # Returns
+        # -------
+        # A dicitonary with reestimated quantities: `Rh`, `Th`, `ratings`, `p_threshold`
+        return reestimated 
     return analyze_reconstruction_core
 
+def prepare_training_data(X, C, Pc, p_threshold, target_type='generic'):
+    # Convert matrix format to user-item-pair format to feed into CFNet
 
-def train_model(model, input_data, **kargs):
+    import utils_cf as uc
+    import data_pipeline as dp
+
+    sample_weights = np.array([])
+    if target_type.startswith(('label', )):
+        Lh = uc.estimateLabelMatrix(X, p_th=p_threshold)
+        Xc, yc, weights, colors = dp.matrix_to_augmented_training_data(Lh, C, Pc)
+        # `weights`, `colors` are not used here
+
+        sample_weights = dp.unravel(C, normalize=False) # Cn is a masked and balanced version of C0
+        
+    elif target_type.startswith(('prob', 'rating')):
+        Xc, yc, weights, colors = dp.matrix_to_augmented_training_data(X, C, Pc) 
+        # `weights`, `colors` are not used here
+        
+        sample_weights = dp.unravel(C, normalize=False) # Cn is a masked and balanced version of C0
+    else: # a more general case where `y_true` carries more than just the labels
+        Xc, yc = dp.matrix_to_augmented_training_data2(X, C, Pc, p_threshold=p_threshold)
+        assert yc.shape[1] >= 3, f"Got n={yc.shape[1]} columns but `yc` should carry at least 3 attributes: (y_true, weight, color) and may include additional attributes"
+    
+    return (Xc, yc, sample_weights)
+
+def training_loop(input_model, input_data, **kargs): 
+    # import matplotlib.pylab as plt
+
+    # Optional Parameters 
+    # -------------------
+    verbose = kargs.get('verbose', 1)
+    test_size = kargs.get('test_size', 0.1)
+    batch_size = kargs.get('batch_size', 64) 
+    epochs = kargs.get('epochs', 120)
+    use_sample_weights = kargs.get('use_sample_weights', True)
+   
+    model, loss_fn = input_model
+    
+    X, y, sample_weights, *rest = input_data
+    assert len(sample_weights) == 0 or (len(sample_weights) == X.shape[0])
+
+    split_pt = int((1-test_size) * X.shape[0])
+
+    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir="logs")
+    if use_sample_weights and (len(sample_weights) > 0): 
+        X_train, X_val, y_train, y_val, W_train, W_val = (
+            X[:split_pt],
+            X[split_pt:],
+            y[:split_pt],
+            y[split_pt:],
+            sample_weights[:split_pt], 
+            sample_weights[split_pt:]
+        )
+
+        history = model.fit(
+            x=X_train,
+            y=y_train,
+            sample_weight=W_train, 
+            batch_size=batch_size,
+            epochs=epochs,
+            verbose=verbose,
+            validation_data=(X_val, y_val, W_val), # test how the model predict unseen ratings
+            callbacks=[tensorboard_callback]
+        )
+    else: # no sample weights
+        X_train, X_val, y_train, y_val = (
+            X[:split_pt],
+            X[split_pt:],
+            y[:split_pt],
+            y[split_pt:])
+        
+        history = model.fit(
+            x=X_train,
+            y=y_train,
+            batch_size=batch_size,
+            epochs=epochs,
+            verbose=verbose,
+            validation_data=(X_val, y_val), # test how the model predict unseen ratings
+            callbacks=[tensorboard_callback]
+        )
+
+    if verbose: 
+        # %matplotlib inline
+        f, ax1 = plt.subplots(nrows=1, ncols=1,figsize=(20,8))
+        plt.plot(history.history["loss"])
+        plt.plot(history.history["val_loss"])
+        plt.title("model loss")
+        plt.ylabel("loss")
+        plt.xlabel("epoch")
+        plt.legend(["train", "test"], loc="upper left")
+        plt.show()
+
+        # %load_ext tensorboard
+        # %tensorboard --logdir logs
+
+        # analyzer = analyze_reconstruction(model, X, L, Pc, n_train, p_threshold=p_threshold, policy_threshold=policy_threshold)
+        # highlight(f"Reestimate the entire rating matrix (X) with learned latent factors/embeddings")
+        # analyzer(L_test, unreliable_only=False)
+        # highlight(f"Reestimate ONLY the unreliable entries in X with learned latent factors/embeddings")
+        # analyzer(L_test, unreliable_only=True)
+
+    return model 
+
+def get_loss_function_name(loss_fn):
+    try: 
+        return loss_fn.__name__ # works only if loss_fn is a plain funciton, not wrapped in a class
+    except: 
+        pass 
+    return loss_fn.__class__.__name__ # E.g. tf.keras.losses.MeanSquaredError() ~> `MeanSquaredError`
+
+def determine_target_type(loss_fn):
+    loss_fn_name = get_loss_function_name(loss_fn)
+    target_type = 'generic'
+    if loss_fn_name.lower().find('entropy') > 0: 
+        return 'label'
+    if loss_fn_name.lower().startswith('meansquared') == 0: 
+        return 'rating'
+    return target_type
+    
+def training_pipeline(input_model, input_data, **kargs):
+    """
+
+
+    Paramters 
+    ---------
+    input_model: A 2-tuple (model, loss function)
+    input_data: A dictionary or a tuple with training data in the form of rating matrices. 
+
+    Optional Parameters
+    -------------------
+    verbose 
+
+    is_cascade 
+
+    alpha: Scaling factor for confidence matrix 
+
+    conf_measure: A confidence measure
+    conf_type: The type of confidence matrix (e.g. `Cn`, `Cw`, `C0`)
+    
+    policy_threshold: The policy/strategy for determining optimial probability threshold (e.g. 'fmax')
+    
+    lh: Pre-computed estiamted labels for the test split (T)
+    fold_number: 
+
+    target_type: The type of training data; this determines how training data is structureed
+
+                How do we structure the training data? This depends on two factors: 
+
+                1. The quantitiy that the model attempts to approximate E.g. 'rating', 'label'
+
+                   - Set `target_type` to 'rating' if the goal is to approximate the rating (e.g. the 
+                    probability score in entries of X, that is, X[i][j]). A suggested loss function 
+                    in this case is the mean square loss (or MSE)
+       
+                   - Set `target_type` to 'label' if the goal is to approximate the labeling associated 
+                     with the rating matrix (X); also see utils_cf.estimateLabelMatrix()
+                     This is useful for entropy-based function such as binary entropy loss or BCE loss
+
+                2. The type of loss function E.g. the label (i.e. `y_true` by sklearn's convention). 
+
+                   Simple loss functions like MSE and BCE have the shape (n_instances, ), where 
+                   we've used `n_instances` refer to the training sample size. 
+
+                   More complex loss functions can take into account not only the true labels (e.g. ratings) but also 
+                   confidence matrix, colors and probability thresholds, among others, and as a result will 
+                   on a more complex shape (n_instances, >=2) where the "label" of the training data becomes a matrix 
+
+                   - Set `target_type` to 'generic' if this is the case. 
+
+    test_size: 
+    epochs: 
+    batch_size: 
+
+    """
     import data_pipeline as dp 
     import utils_cf as uc
     from utils_sys import highlight
     from analyzer import is_sparse
     import matplotlib.pylab as plt
 
-    # Set algorithmic parameters 
-    #-----------------------
-    n_factors = kargs.get('n_factors', 50)
+    # General Paramters 
+    # -----------------
+    verbose = kargs.get("verbose", 1)
+    ########################################
+    is_cascade = kargs.get('is_cascade', False) # if True, merge training split (R) and test split (T) to get `X`... 
+    # ... and also merge training set labels (L_train) and estimated test set labels (lh) to get `L`, and train the entire model ... 
+    # ... based on (X, L)
+    # In other words, when `is_cascade` is on, then we train a model that predicts ratings in both training split and test split 
+    # but when `is_cascade` is off, we only train a model that predicts ratings in the training split (R); the test split's ratings will 
+    # then be based on the patterns learned from the training split such as those learnd from kNN-based models
+    ########################################
+
+    # Algorithm Parameters 
+    #---------------------
     alpha = kargs.get('alpha', 10.0)  # A scaling factor for the "implicit feedback," which in this case is the confidence scores 
     conf_measure = kargs.get('conf_measure', 'brier')  # measure of confidence of base predictors' probabilistic predictions
     policy_threshold = kargs.get('policy_threshold', 'fmax') # method for optimizing the probability threshold 
-    
-    label_estimator = kargs.get('label_estimator', uc.estimateLabels)
-    estimated_labels = kargs.get('lh', None)
+    estimated_labels = kargs.get('lh', None) # pre-computed estimated labels for `T`
+    fold_number = kargs.get('fold_number', 0) # dataset identifier used in cross validation or multiple runs of subsampling
 
-    fold_number = 0
-    test_size = 0.1
-    ctype = kargs.get("ctype", 'Cn')
-    #-----------------------
-
-    # SGD training paramters
-    #-----------------------
-    epochs = kargs.get('epochs', 100)
-    batch_size = kargs.get('batch_size', 64)
-    loss_fn = kargs.get('loss_fn', None)
-    is_cross_entropy = True if str(loss_fn).split('.')[2].lower().find('entropy') > 0 else False
-    #-----------------------
-
-    verbose = kargs.get("verbose", 1)
 
     # Load pre-trained level-1 data (associated with a given fold number)
     ####################################################################################
@@ -658,100 +859,94 @@ def train_model(model, input_data, **kargs):
             L_test = rest[0]
  
     n_train = R.shape[1]
+    assert len(U) == R.shape[0]
 
     # b. Derived quantities
     p_threshold = uc.estimateProbThresholds(R, L=L_train, pos_label=1, policy=policy_threshold)
-
-    #####################
-    lh = estimated_labels
-    if lh is None: lh = uc.estimateLabels(T, p_th=p_threshold) # We cannot use L_test (cheating), but we have to guesstimate [1]
-    #####################
-
-    L = np.hstack((L_train, lh)) 
-    X = np.hstack((R, T))
-    # Note: Remember to use "estimated labels" (lh) for the test set; not the true label (L_test)
-
-    assert len(U) == X.shape[0]
-    print(f"> shape(R):{R.shape} || shape(T): {T.shape} => shape(X): {X.shape}")
-
+    
     # Compute various types of confidence matrices (using only training split `R` and `L_train`)
     ####################################################################################
+    
+    msg = ''
+    if is_cascade: 
+        #####################
+        lh = estimated_labels
+        if lh is None: 
+            msg += f"[labeling] Use 'majority vote' by default for the estimated labels for T\n"
+            lh = uc.estimateLabels(T, p_th=p_threshold) # NOTE: We of course cannot use `L_test`
+        L = np.hstack((L_train, lh)) # Remember to use "estimated labels" (lh) for the test set; not the true label (L_test)
+        msg += f"[merge] Merging 'L_train' and 'lh': len(L_train): {len(L_train)} || len(lh): {len(lh)} => len(L): {len(L)}\n"
+        #####################
+
+        X = np.hstack((R, T))
+        msg += f"[merge] Merging 'R' and 'T': shape(R):{R.shape} || shape(T): {T.shape} => shape(X): {X.shape}\n"
+        assert len(L) == X.shape[1]
+    else: 
+        L = L_train
+        X = R
+    if verbose: print(msg)
 
     Pc, C0, Cw, Cn, *rest = \
-        uc.evalConfidenceMatrices(R, L_train, alpha=alpha, 
-                                     p_threshold=p_threshold, 
+        uc.evalConfidenceMatrices(X, L, alpha=alpha, 
+                                        p_threshold=p_threshold, 
                                         conf_measure=conf_measure, policy_threshold=policy_threshold, 
                                         
                                         # Optional debug/test parameters 
-                                        U=U, n_train=n_train, fold_number=fold_number, 
+                                        U=U, n_train=n_train, 
+                                        fold_number=fold_number, 
                                         is_cascade=True,
                                         verbose=0)
-    assert C0.shape == R.shape
+    assert C0.shape == X.shape
     y_colors = pmodel.verify_colors(Pc)  # [log] status: ok
 
     # Prepare training data
     ####################################################################################
+    conf_type = kargs.get("conf_type", 'Cn') # confidence matrix type 
 
     # Choose confidence matrix type
     # Note: This is only relevant when we use the "color-aware" loss function like C-square loss (see `demo_cfnet_with_csqr_loss()`)
-    # if ctype == 'Cn': # "sparse" because FP- and FN- weights are zeroed out
-    #     # Use `Cn` (masked confidence matrix) instead of `Cw` (a dense matrix that includes weights for FPs, FNs) 
-    #     C = Cn
-    # elif ctype == 'Cw': # "dense"
-    #     C = Cw
-    # else: 
-    #     C = C0
+    if conf_type in ('Cn', 'sparse'): # "sparse" because FP- and FN- weights are zeroed out
+        # Use `Cn` (masked confidence matrix) instead of `Cw` (a dense matrix that includes weights for FPs, FNs) 
+        C = Cn
+    elif conf_type in ('Cw', 'dense'): 
+        C = Cw
+    else: # "Raw" confidence matrix
+        C = C0 
+    # ... Now we have (X, C, Pc, p_threshold)
 
-    if is_cross_entropy: # If the loss function is a entropy-based loss, we measure the loss wrt to the true labels
-        Lr = uc.estimateLabelMatrix(R, p_th=p_threshold)
-        Xc, yc, weights, colors = dp.matrix_to_augmented_training_data(Lr, Cw, Pc)
-    else: 
-        Xc, yc, weights, colors = dp.matrix_to_augmented_training_data(R, Cw, Pc) 
-    # NOTE: Don't overwrite X (`Xc` is not the same as `X`, which is a rating matrix)
+    cf_model, loss_fn = input_model
 
-    sample_weights = dp.unravel(Cn, normalize=False) # Cn is a masked and balanced version of C0
-    assert len(sample_weights) == Xc.shape[0]
+    # How do we structure the training data? This depends on two factors: 
+    # 1. The quantitiy that the model attempts to approximate E.g. `rating`, `label`
+    # 2. The type of loss function E.g. the label (i.e. `y_true` by sklearn's convention) 
+    #    for the MSE and BCE losses has shape (n_instances, ), where n_instances refer to the training sample size
+    #    More complex loss functions can take into account not only the true labels (e.g. ratings) but also 
+    #    confidence matrix, colors and probability thresholds, among others, and as a result will 
+    #    on a more complex shape (n_instances, >=2) where the "label" of the training data becomes a matrix 
+    target_type = kargs.get('target_type', determine_target_type(loss_fn)) # 'label', 'rating', 'generic'
+    if verbose: print(f"[info] Confidence matrix type: {conf_type}, target data type: {target_type}")
 
-    #----------------
-    # test_size = 0.1
-    #----------------
-    split_pt = int((1-test_size) * Xc.shape[0])
+    Xc, yc, sample_weights = prepare_training_data(X, C, Pc, p_threshold, target_type=target_type)
 
-    X_train, X_val, y_train, y_val, W_train, W_val = (
-        Xc[:split_pt],
-        Xc[split_pt:],
-        yc[:split_pt],
-        yc[split_pt:],
-        sample_weights[:split_pt], 
-        sample_weights[split_pt:]
-    )
+    # SGD training paramters
+    #-----------------------
+    epochs = kargs.get('epochs', 100)
+    batch_size = kargs.get('batch_size', 64)
+    test_size = kargs.get('test_size', 0.1)
+    use_sample_weights = kargs.get('use_sample_weights', True) # if True, then use sample weights whenever they are available
+    #-----------------------
 
-    # Assume that the model has been configured and passed in as an object
-    # n_user, n_items = R.shape    
-    # model = get_cfnet_compiled(n_users, n_items, n_factors, loss_fn=loss)
-
-    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir="logs")
-    history = model.fit(
-        x=X_train,
-        y=y_train,
-        sample_weight=W_train, 
-        batch_size=batch_size,
-        epochs=epochs,
-        verbose=1,
-        validation_data=(X_val, y_val, W_val), # test how the model predict unseen ratings
-        callbacks=[tensorboard_callback]
-    )
-
-    if verbose: 
-        # %matplotlib inline
-        f, ax1 = plt.subplots(nrows=1, ncols=1,figsize=(20,8))
-        plt.plot(history.history["loss"])
-        plt.plot(history.history["val_loss"])
-        plt.title("model loss")
-        plt.ylabel("loss")
-        plt.xlabel("epoch")
-        plt.legend(["train", "test"], loc="upper left")
-        plt.show()
+    # Training Parameters
+    # -------------------
+    # test_size 
+    # batch_size 
+    # epochs
+    # lr: learning rate => this goes into model definition
+    
+    # model, loss_fn = input_model
+    model = training_loop(input_model=input_model, input_data=(Xc, yc, sample_weights), 
+                               test_size=test_size, batch_size=batch_size, epochs=epochs, 
+                               use_sample_weights=use_sample_weights) # 
 
     return model
 
@@ -835,7 +1030,7 @@ def demo_cfnet_with_csqr_loss(loss_fn=None, ctype='Cn', n_factors=50, alpha=10.0
         yc[split_pt:])
 
     if loss_fn is None:
-        loss_fn = confidence_weighted_loss # Options: confidence_weighted_loss, c_square_loss
+        loss_fn = confidence_weighted_loss # Options: confidence_weighted_loss, c_squared_loss
     
     n_users, n_items = X.shape
     model = get_cfnet_uncompiled(n_users, n_items, n_factors)

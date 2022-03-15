@@ -191,10 +191,12 @@ def validate_crf_params(rs, output_path=None, dpi=300, save=True, verbose=True):
 def hyperparameter_template(model='rf'):
     
     if model.lower() in ('rf', 'random forest'): 
-        n_estimators = [100, 200, ] # [int(x) for x in np.linspace(start = 100, stop = 700, num = 50)]
+        n_estimators = [200, 300 ] # [int(x) for x in np.linspace(start = 100, stop = 700, num = 50)]
         max_features = ['auto', ] # ['auto', 'log2']  # Number of features to consider at every split
+        
         max_depth = [8, 10] # [int(x) for x in np.linspace(10, 110, num = 11)]   # Maximum number of levels in tree
         max_depth.append(None)
+
         min_samples_split = [2, 4]  # Minimum number of samples required to split a node
         min_samples_leaf = [1, ]    # Minimum number of samples required at each leaf node
         max_leaf_nodes = [None,  ] # + [10, 25, 50] # [None] + list(np.linspace(10, 50, 500).astype(int)), # 10 to 50 "inclusive"
