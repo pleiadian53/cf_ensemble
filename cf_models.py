@@ -137,6 +137,8 @@ class CFNet2(keras.Model):
 
 def predict_by_knn(model, model_knn, R, T, L_train, L_test, C, Pc, codes={}, pos_label=1, verbose=1): 
     """
+    Given an instance of CFNet (model) and an instance of Faiss KNN model (model_knn) along with 
+    the training data (R, L_train, C, Pc), reestimate the test data (T). 
     
     Parameters 
     ----------
