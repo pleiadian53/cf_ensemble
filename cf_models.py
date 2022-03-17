@@ -569,7 +569,7 @@ def analyze_reconstruction(model, X, L, Pc, n_train=None, p_threshold=[], policy
     if isinstance(X, (tuple, list)): 
         R, T = X
         n_train = R.shape[1] # infer training set size
-        X = np.hstack([R, T]) # X is modified hence nonlocal
+        X = np.hstack([R, T]) 
     else: 
         assert n_train is not None
         R, T = X[:,:n_train], X[:,n_train:]
@@ -578,7 +578,7 @@ def analyze_reconstruction(model, X, L, Pc, n_train=None, p_threshold=[], policy
     if isinstance(L, (tuple, list)): 
         L_train, lh = L
         n_train = len(L_train) # infer training set size
-        L = np.hstack([L_train, lh]) # L is modified hence nonlocal
+        L = np.hstack([L_train, lh]) 
     else: 
         L_train, lh = L[:n_train], L[n_train:] # split L into L_train and lh; note that lh is NOT L_test 
     
