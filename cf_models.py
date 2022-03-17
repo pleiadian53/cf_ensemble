@@ -520,8 +520,8 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
     include_stacking = kargs.get('include_stacking', False) 
     if include_stacking:
         stacker = LogisticRegression()
-        # solvers = ['newton-cg', 'lbfgs', 'liblinear']
-        penalty = ['l1', 'l2']
+        # solvers = ['newton-cg', 'lbfgs', 'liblinear'] # newton-cg and lbfgs solvers support only l2 penalties.
+        penalty = ['l2', ] # 'l1',
         c_values = np.logspace(-2, 2, 5)
         grid = dict(penalty=penalty, C=c_values)
 
@@ -630,8 +630,8 @@ def analyze_reconstruction(model, X, L, Pc, n_train=None, p_threshold=[], policy
         # Prediction: By stacking
         ####################################
         stacker = LogisticRegression()
-        # solvers = ['newton-cg', 'lbfgs', 'liblinear']
-        penalty = ['l1', 'l2']
+        # solvers = ['newton-cg', 'lbfgs', 'liblinear'] # newton-cg and lbfgs solvers support only l2 penalties.
+        penalty = ['l2', ]  # 'l1'
         c_values = np.logspace(-2, 2, 5)
         grid = dict(penalty=penalty, C=c_values)
 
