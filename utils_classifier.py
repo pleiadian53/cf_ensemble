@@ -212,7 +212,7 @@ def hyperparameter_template(model='rf'):
                        'bootstrap': bootstrap}
     elif model.lower() in ('logis'): 
         solvers = ['lbfgs', ] # ['newton-cg', 'lbfgs', 'liblinear']
-        penalty = ['l2', 'l1']
+        penalty = ['l2', ] # 'l1'
         c_values = [100, 10, 1.0, 0.1, 0.01]
         random_grid = dict(solver=solvers, penalty=penalty, C=c_values)
     else: 

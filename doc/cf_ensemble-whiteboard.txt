@@ -19,6 +19,8 @@ RF stacker
 
 
 
+
+
 # Settings 
 - class skewness 
   0.6
@@ -37,6 +39,23 @@ RF stacker
        + Majority vote: F1 score with re-estimated Th:
     (C-Sqr with Cw) Reestimate ONLY the unreliable entries in X with learned latent factors/embeddings
        + Majority vote: F1 score with re-estimated Th:
+       
+================================================================================
+Guesstimated labeling (on T) via STACKING
+================================================================================
+> Labeling accuracy: 0.8888
+> Reliable-to-correct ratio: 0.8888
+> Precision: 0.8848997465211892, Recall: 0.8616213111274554
+> Predcitio(TP): 0.019244996578461664, Recall(TP): 0.13032548790604537 => f1(TP): 0.03353754689613229
+> Error rate: 4.259801657465065e-05
+================================================================================
+Guesstimated labeling (on T) via MAJORITY VOTE
+================================================================================
+> Labeling accuracy: 0.3496
+> Reliable-to-correct ratio: 0.3496
+> Precision: 0.3390717716886797, Recall: 0.4897295532506114
+> Predcitio(TP): 0.0770957891477572, Recall(TP): 0.7744341492878465 => f1(TP): 0.14023138632566992
+> Error rate: 0.00016490214917870143
 
   
   
