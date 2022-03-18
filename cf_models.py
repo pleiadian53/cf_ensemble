@@ -570,7 +570,7 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
 
     if verbose: 
         mode = 'unreliable only' if unreliable_only else 'complete' # 'complete' reestimation or reestimating the entire rating matrix
-        msg += f"[result] Best settings ({mode}): {reestimated['best_params']['name']}, score={scores_sorted[0][0]}\n"
+        msg += f"[result] Best settings ({mode}): {reestimated['best_params']['name']}, score: {scores_sorted[0][0]}\n"
         print(msg)
     if verbose > 1: 
         print("[info] Reestiamted quantities are available through the following keys:")
@@ -725,7 +725,7 @@ def analyze_reconstruction(model, X, L, Pc, n_train=None, p_threshold=[], policy
 
         if verbose: 
             mode = 'unreliable only' if unreliable_only else 'complete' # 'complete' reestimation or reestimating the entire rating matrix
-            msg += f"[result] Best settings ({mode}): {reestimated['best_params']['name']}, score={scores_sorted[0][0]}\n"
+            msg += f"[result] Best settings ({mode}): {reestimated['best_params']['name']}, score: {scores_sorted[0][0]}\n"
             print(msg)
         if verbose > 1: 
             print("[info] Reestiamted quantities are available through the following keys:")
