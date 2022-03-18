@@ -1444,7 +1444,8 @@ def test():
     X_train, X_test, y_train, y_test = train_test_split(X, y, stratify=y, random_state=42)
     clf.fit(X_train, y_train)
 
-    print('[result]', clf.score(X_test, y_test))
+    print('[result] performance score:', clf.score(X_test, y_test))
+    # For various scoring functions, see: https://scikit-learn.org/stable/modules/model_evaluation.html
 
     return
 

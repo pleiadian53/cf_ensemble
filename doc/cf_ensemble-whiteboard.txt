@@ -3,6 +3,9 @@
 
 
 # Todo 
+
+Performance tracker (algorithms)
+
 evalLabels(): use majority vote 
 also tried kNN 
 

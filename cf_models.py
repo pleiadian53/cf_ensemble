@@ -470,9 +470,15 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
     # conf_policy: 
     import data_pipeline as dp
     import utils_cf as uc
+    import utils_classifier as uclf
     from scipy.spatial import distance
 
+    # Optional Parameters 
+    # -------------------
+    verbose = kargs.get('verbose', 1)
+
     reestimated = {}
+    scores = []
 
     # Original data
     R, Rh, L_train = train.X, train.Xh, train.L # [add] train.Pc
@@ -486,52 +492,90 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
     p_threshold = uc.estimateProbThresholds(R, L=L_train, pos_label=1, policy=policy_threshold)
 
     # Re-estimate the p_threshold as well 
-    reestimated['p_threshold'] = p_threshold_new = uc.estimateProbThresholds(Rh, L=L_train, pos_label=1, policy=policy_threshold)
+    reestimated['p_threshold2'] = p_threshold_new = uc.estimateProbThresholds(Rh, L=L_train, pos_label=1, policy=policy_threshold)
 
-    print(f"[info] From R to Rh, delta(Frobenius norm)= {LA.norm(Rh-R, ord='fro')}")
-    print(f"[info] From T to Th, delta(Frobenius norm)= {LA.norm(Th-T, ord='fro')}")
-    print(f"[info] From `p_threshold(R)` to `p_threshold(Rh)`, delta(2-norm)= {LA.norm(p_threshold_new-p_threshold, 2)}")
-    print(f"...    Original p_threshold:\n{p_threshold}\n")
-    print(f"...    New p_threshold:\n{p_threshold_new}\n")
+    if verbose: 
+        print(f"[info] From R to Rh, delta(Frobenius norm)= {LA.norm(Rh-R, ord='fro')}")
+        print(f"[info] From T to Th, delta(Frobenius norm)= {LA.norm(Th-T, ord='fro')}")
+        print(f"[info] From `p_threshold(R)` to `p_threshold(Rh)`, delta(2-norm)= {LA.norm(p_threshold_new-p_threshold, 2)}")
+        print(f"...    Original p_threshold:\n{p_threshold}\n")
+        print(f"...    New p_threshold:\n{p_threshold_new}\n")
 
     # Evaluation
     ###################################################
+    msg = ""
 
     # [todo] Try different strategies of reducing T to label predictions
-    lh = uc.estimateLabels(T, L=[], p_th=p_threshold, pos_label=1) # "majority vote given proba thresholds" is the default strategy
-    reestimated['lh_orig_pth'] = lh_new_orig_pth = uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T and original p_th to predict labels
-    reestimated['lh'] = lh_new = uc.estimateLabels(Th, L=[], p_th=p_threshold_new, pos_label=1) # Use the re-estimated T to predict labels
+    reestimated['lh_maxvote'] = lh = uc.estimateLabels(T, L=[], p_th=p_threshold, pos_label=1) # "majority vote given proba thresholds" is the default strategy
+    reestimated['lh2_maxvote_pth_unadjusted'] = lh_new_orig_pth = \
+            uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T and original p_th to predict labels
+    reestimated['lh2_maxvote_pth_adjusted'] = lh_new = \
+            uc.estimateLabels(Th, L=[], p_th=p_threshold_new, pos_label=1) # Use the re-estimated T to predict labels
+    msg += f"[info] How different are lh and lh_new? {distance.hamming(lh, lh_new)}\n"
 
-    print(f"[info] How different are lh and lh_new? {distance.hamming(lh, lh_new)}")
 
-    # Prediction: By majority vote
+    # 1. Prediction: By majority vote
     ####################################
-    reestimated['score_orig'] = f1_score(L_test, lh)
-    print(f"[result] F1 score with the original T:  {reestimated['score_orig']}")
 
-    reestimated['score_lh_orig_pth'] = f1_score(L_test, lh_new_orig_pth)
-    print(f"[result] F1 score with re-estimated Th using original p_threshold: {reestimated['score_lh_orig_pth']}")
+    # Evaluate using a given performance score (since CF ensemble is primarily targeting imbalance class distributions, 
+    # by defeaut, we will use F1 score)
+    reestimated['score_lh_maxvote'] = reestimated['score_baseline_maxvote'] = perf_score = f1_score(L_test, lh)
+    scores.append((perf_score , {'lh': lh, 'p_threshold': p_threshold, 'name': 'lh_maxvote'}))
+    msg += f'[result] Majority vote: F1 score with the original T:  {perf_score}\n'
 
-    reestimated['score_lh'] = perf_score = f1_score(L_test, lh_new) 
-    print(f"[result] F1 score with re-estimated Th: {reestimated['score_lh']}")
+    reestimated['score_lh2_maxvote_pth_unadjusted'] = perf_score = f1_score(L_test, lh_new_orig_pth)
+    scores.append((perf_score , {'lh': lh_new_orig_pth, 'p_threshold': p_threshold, 'name': 'lh2_maxvote_pth_unadjusted'}))
+    msg += f'[result] Majority vote: F1 score with re-estimated Th using original p_threshold: {perf_score}\n'
 
-    # Prediction: By stacking
+    reestimated['score_lh2_maxvote_pth_adjusted'] = perf_score = f1_score(L_test, lh_new) 
+    scores.append((perf_score , {'lh': lh_new, 'p_threshold': p_threshold_new, 'name': 'lh2_maxvote_pth_adjusted'}))
+    msg += f'[result] Majority vote: F1 score with re-estimated Th: {perf_score}\n'
+
+    if verbose: print(msg)
+
+    # 2. Prediction: By stacking
     ####################################
+    # Parameters: 
+    #   - include_stacking
+    #   - stacker 
+    #   - grid
+    msg = ""
     include_stacking = kargs.get('include_stacking', False) 
     if include_stacking:
-        stacker = LogisticRegression()
-        # solvers = ['newton-cg', 'lbfgs', 'liblinear'] # newton-cg and lbfgs solvers support only l2 penalties.
-        penalty = ['l2', ] # 'l1',
-        c_values = np.logspace(-2, 2, 5)
-        grid = dict(penalty=penalty, C=c_values)
+        stacker = kargs.get('stacker', None)
+        grid = kargs.get('grid', {})
+        if stacker is None: 
+            stacker = LogisticRegression() 
+            grid = uclf.hyperparameter_template('logistic')
+        else: 
+            assert callable(stacker), f"Invalid meta-classifier: {stacker}"
 
         lh = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(R.T, L_train).predict(T.T)
-        reestimated['score_orig_stacker'] = f1_score(L_test, lh) 
-        print(f"[result] Stacking: F1 score with the original T:  {reestimated['score_orig_stacker']}")
+        reestimated['score_lh_stacker'] = f1_score(L_test, lh) 
+        msg += f"[result] Stacking: F1 score with the original T:  {reestimated['score_orig_stacker']}\n"
 
         lh_new = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(Rh.T, L_train).predict(Th.T)
-        reestimated['score_lh_stacker'] = f1_score(L_test, lh_new)
-        print(f"[result] Stacking: F1 score with re-estimated Th: {reestimated['score_lh_stacker']}")    
+        reestimated['score_lh2_stacker_pth_adjusted'] = f1_score(L_test, lh_new)
+        msg += f"[result] Stacking: F1 score with re-estimated Th: {reestimated['score_lh_stacker']}\n" 
+
+        if verbose: print(msg)
+
+    # 3. Rank parameter settings
+    ####################################
+    msg = ""
+    # Choose the best settings (excluding stacking on re-estiamted matrices)
+    scores_sorted = sorted(scores, key=lambda x: x[0], reverse=True) 
+    if verbose > 1: msg += f"[result] Methods ranked:\n{[(s, d['name']) for s, d in scores_sorted]}\n\n"
+    reestimated['best_params'] = scores_sorted[0][1] # select the best setting according to the performance measure
+
+    if verbose: 
+        mode = 'unreliable only' if unreliable_only else 'complete' # 'complete' reestimation or reestimating the entire rating matrix
+        msg += f"[result] Best settings ({mode}): {reestimated['best_params']['name']}, score={scores_sorted[0][0]}\n"
+        print(msg)
+    if verbose > 1: 
+        print("[info] Reestiamted quantities are available through the following keys:")
+        for k, v in reestimated.items(): 
+            print(f'  - {k}')
 
     return reestimated
 
@@ -562,6 +606,7 @@ def analyze_reconstruction(model, X, L, Pc, n_train=None, p_threshold=[], policy
     """
     import data_pipeline as dp
     import utils_cf as uc
+    import utils_classifier as uclf
     from scipy.spatial import distance
 
     # Original rating matrices 
@@ -587,12 +632,17 @@ def analyze_reconstruction(model, X, L, Pc, n_train=None, p_threshold=[], policy
     #     Pc_train, Pc_test = Pc
     #     Pc = np.hstack([Pc_train, Pc_test])
 
-    def analyze_reconstruction_core(L_test, unreliable_only=True): 
+    def analyze_reconstruction_core(L_test, unreliable_only=True, **kargs): 
 
         nonlocal p_threshold # X, L, n_train
-        reestimated = {}
+        reestimated = {} # keeps track of reestimated quantities (e.g. Rh, Th)
+        scores = [] # keeps track of performance score and parameter settings
+        settings = {} # keeps track of the algorithmic settings (used with `scores` to rank settings)
+        # [todo] Use Hyper or other more organized methods to keep track of parameter settings
 
-        # New rating matrices (level-1) with probabilties reestimated
+        verbose = kargs.get('verbose', 1)
+
+        # 1. New rating matrices (level-1) with probabilties reestimated
         ####################################
         if not unreliable_only: 
             # A. Reestimate entire matrix
@@ -606,48 +656,85 @@ def analyze_reconstruction(model, X, L, Pc, n_train=None, p_threshold=[], policy
         # Probability thresholds associated with the original training data (R)
         if len(p_threshold) == 0: p_threshold = uc.estimateProbThresholds(R, L=L_train, pos_label=1, policy=policy_threshold)
         # Re-estimate the p_threshold as well 
-        reestimated['p_threshold'] = p_threshold_new = uc.estimateProbThresholds(Rh, L=L_train, pos_label=1, policy=policy_threshold)
+        reestimated['p_threshold2'] = p_threshold_new = uc.estimateProbThresholds(Rh, L=L_train, pos_label=1, policy=policy_threshold)
 
-        print(f"[info] From R to Rh, delta(Frobenius norm)= {LA.norm(Rh-R, ord='fro')}")
-        print(f"[info] From T to Th, delta(Frobenius norm)= {LA.norm(Th-T, ord='fro')}")
+        if verbose: 
+            print(f"[info] From R to Rh, delta(Frobenius norm)= {LA.norm(Rh-R, ord='fro')}")
+            print(f"[info] From T to Th, delta(Frobenius norm)= {LA.norm(Th-T, ord='fro')}")
 
-        # Prediction: By majority vote
+        # 2. Prediction: By majority vote
         ####################################
-        lh = uc.estimateLabels(T, L=[], p_th=p_threshold, pos_label=1) # "majority vote given proba thresholds" is the default strategy
-        reestimated['lh_orig_pth'] = lh_new_orig_pth = uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T and original p_th to predict labels
-        reestimated['lh'] = lh_new = uc.estimateLabels(Th, L=[], p_th=p_threshold_new, pos_label=1) # Use the re-estimated T to predict labels
-        print(f"[info] How different are lh and lh_new? {distance.hamming(lh, lh_new)}")
+        msg = ""
+        reestimated['lh_maxvote'] = lh = uc.estimateLabels(T, L=[], p_th=p_threshold, pos_label=1) # "majority vote given proba thresholds" is the default strategy
+        reestimated['lh2_maxvote_pth_unadjusted'] = lh_new_orig_pth = \
+                uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T and original p_th to predict labels
+        reestimated['lh2_maxvote_pth_adjusted'] = lh_new = \
+                uc.estimateLabels(Th, L=[], p_th=p_threshold_new, pos_label=1) # Use the re-estimated T to predict labels
+        msg += f"[info] How different are lh and lh_new? {distance.hamming(lh, lh_new)}\n"
 
-        reestimated['score_orig'] = perf_score = f1_score(L_test, lh)
-        print(f'[result] Majority vote: F1 score with the original T:  {perf_score}')
+        # Evaluate using a given performance score (since CF ensemble is primarily targeting imbalance class distributions, 
+        # by defeaut, we will use F1 score)
+        reestimated['score_lh_maxvote'] = reestimated['score_baseline_maxvote'] = perf_score = f1_score(L_test, lh)
+        scores.append((perf_score , {'lh': lh, 'p_threshold': p_threshold, 'name': 'lh_maxvote'}))
+        msg += f'[result] Majority vote: F1 score with the original T:  {perf_score}\n'
 
-        reestimated['score_lh_orig_pth'] = perf_score = f1_score(L_test, lh_new_orig_pth)
-        print(f'[result] Majority vote: F1 score with re-estimated Th using original p_threshold: {perf_score}')
+        reestimated['score_lh2_maxvote_pth_unadjusted'] = perf_score = f1_score(L_test, lh_new_orig_pth)
+        scores.append((perf_score , {'lh': lh_new_orig_pth, 'p_threshold': p_threshold, 'name': 'lh2_maxvote_pth_unadjusted'}))
+        msg += f'[result] Majority vote: F1 score with re-estimated Th using original p_threshold: {perf_score}\n'
 
-        reestimated['score_lh'] = perf_score = f1_score(L_test, lh_new) 
-        print(f'[result] Majority vote: F1 score with re-estimated Th: {perf_score}')
+        reestimated['score_lh2_maxvote_pth_adjusted'] = perf_score = f1_score(L_test, lh_new) 
+        scores.append((perf_score , {'lh': lh_new, 'p_threshold': p_threshold_new, 'name': 'lh2_maxvote_pth_adjusted'}))
+        msg += f'[result] Majority vote: F1 score with re-estimated Th: {perf_score}\n'
 
-        # Prediction: By stacking
+        if verbose: print(msg)
+
+        # [todo] Use a hyperparameter tracker to organize different parameter settings
+
+        # 3. Prediction: By stacking
         ####################################
-        stacker = LogisticRegression()
-        # solvers = ['newton-cg', 'lbfgs', 'liblinear'] # newton-cg and lbfgs solvers support only l2 penalties.
-        penalty = ['l2', ]  # 'l1'
-        c_values = np.logspace(-2, 2, 5)
-        grid = dict(penalty=penalty, C=c_values)
+        msg = ""
+        stacker = kargs.get('stacker', None)
+        grid = kargs.get('grid', {})
+        if stacker is None: 
+            stacker = LogisticRegression() 
+            grid = uclf.hyperparameter_template('logistic')
+        else: 
+            assert callable(stacker), f"Invalid meta-classifier: {stacker}"
 
         # X_train, y_train = R.T, L_train
         lh = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(R.T, L_train).predict(T.T)
-        reestimated['score_orig_stacker'] = perf_score = f1_score(L_test, lh) 
-        print(f'[result] Stacking: F1 score with the original T:  {perf_score}')
+        reestimated['score_lh_stacker'] = perf_score = f1_score(L_test, lh) 
+        msg += f'[result] Stacking: F1 score with the original T:  {perf_score}\n'
 
         # X_train, y_train = Rh.T, L_train
         lh_new = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(Rh.T, L_train).predict(Th.T)
-        reestimated['score_lh_stacker'] = perf_score = f1_score(L_test, lh_new)
-        print(f'[result] Stacking: F1 score with re-estimated Th: {perf_score}')       
+        reestimated['score_lh2_stacker_pth_adjusted'] = perf_score = f1_score(L_test, lh_new)
+        msg += f'[result] Stacking: F1 score with re-estimated Th: {perf_score}\n'   
+        
+        if verbose: print(msg)  
+
+        # 4. Rank parameter settings
+        ####################################
+        msg = ""
+        # Choose the best settings (excluding stacking on re-estiamted matrices)
+        # Note: somehow `key` is necessary (shouldn't be by default) otherwise error: "The truth value of an array with more than one element"
+        scores_sorted = sorted(scores, key=lambda x: x[0], reverse=True) 
+        if verbose > 1: msg += f"[result] Methods ranked:\n{[(s, d['name']) for s, d in scores_sorted]}\n\n"
+        reestimated['best_params'] = scores_sorted[0][1] # select the best setting according to the performance measure
+        reestimated['best_params_score'] = scores_sorted[0][0]
+
+        if verbose: 
+            mode = 'unreliable only' if unreliable_only else 'complete' # 'complete' reestimation or reestimating the entire rating matrix
+            msg += f"[result] Best settings ({mode}): {reestimated['best_params']['name']}, score={scores_sorted[0][0]}\n"
+            print(msg)
+        if verbose > 1: 
+            print("[info] Reestiamted quantities are available through the following keys:")
+            for k, v in reestimated.items(): 
+                print(f'  - {k}')
  
         # Returns
         # -------
-        # A dicitonary with reestimated quantities: `Rh`, `Th`, `ratings`, `p_threshold`
+        # A dicitonary with reestimated quantities: `ratings`, `p_threshold_new`, ...
         return reestimated 
     return analyze_reconstruction_core
 

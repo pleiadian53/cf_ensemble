@@ -33,6 +33,16 @@ class Graph(object):
     def DFStrace(): 
         pass
 
+# class Tracker(object): 
+#     def __init__(self, parameters: tuple[str], settings={}, to_str=True, sep='_'): 
+#         self.db = dict.fromkeys(sep.join(parameters) if to_str else tuple(parameters))
+
+# def algorithm_tracker(parameters, settings, db={}): 
+#     """
+#     Takes in a list (or tuple) of parameters and convert them to keys 
+#     """
+#     pass
+
 def least_common(array, to_find=None):
     # import heapq 
     # from operator import itemgetter

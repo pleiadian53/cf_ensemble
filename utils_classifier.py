@@ -15,6 +15,11 @@ from sklearn.model_selection import RepeatedStratifiedKFold
 from sklearn.model_selection import cross_val_score, train_test_split
 from sklearn.model_selection import RandomizedSearchCV, GridSearchCV
 
+# Some basic classifiers
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier # AdaBoostClassifier, StackingClassifier
+
 from sklearn.metrics import accuracy_score, confusion_matrix, precision_score, recall_score, roc_auc_score, roc_curve, f1_score
 
 """
@@ -210,10 +215,12 @@ def hyperparameter_template(model='rf'):
                        'min_samples_leaf': min_samples_leaf,
                        'max_leaf_nodes': max_leaf_nodes, 
                        'bootstrap': bootstrap}
-    elif model.lower() in ('logis'): 
-        solvers = ['lbfgs', ] # ['newton-cg', 'lbfgs', 'liblinear']
+    elif model.lower().startswith(('logis', 'logit', )): 
+        solvers = ['lbfgs', ] # ['newton-cg', 'lbfgs', 'liblinear'] 
+        # Note: newton-cg and lbfgs solvers support only l2 penalties.
+
         penalty = ['l2', ] # 'l1'
-        c_values = [100, 10, 1.0, 0.1, 0.01]
+        c_values = np.logspace(-3, 2, 6) # [100, 10, 1.0, 0.1, 0.01]
         random_grid = dict(solver=solvers, penalty=penalty, C=c_values)
     else: 
         raise NotImplementedError(f"{model.capitalize()} not supported. Coming soon :)")
@@ -686,7 +693,7 @@ def demo_model_selection():
     # Define model
     model = RandomForestClassifier()
 
-    n_estimators = [10, 100, 500, 1000]
+    n_estimators = [10, 100, 500, ]
     max_features = ['sqrt', 'log2']
     grid = dict(n_estimators=n_estimators,max_features=max_features)
 
@@ -698,6 +705,19 @@ def demo_model_selection():
     perf_score = f1_score(y_test, y_pred)
     print(f'[result] F1 score:  {perf_score}')
 
+    #####################################
+    
+    # Define another model
+    model = LogisticRegression()
+    grid = hyperparameter_template('logistic')
+
+    tuner = tune_model(model, grid, scoring='roc_auc', verbose=1)
+    model_tuned = tuner(X_train, y_train)
+    y_pred = model_tuned.predict(X_test)
+    print(f"> shape(y_pred): {y_pred.shape}")
+
+    perf_score = f1_score(y_test, y_pred)
+    print(f'[result] F1 score:  {perf_score}')
 
     return
 
