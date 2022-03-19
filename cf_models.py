@@ -463,6 +463,12 @@ def interpolate(X, Xh, Pc=None, C=None, L=[], p_threshold=[], use_confidence_wei
     return Xh_partial
 
 def analyze_reestimated_matrices(train, test, meta, **kargs): 
+    """
+    Analyze and compare performance measures under different algorithmic settings. 
+    Similar to analyze_reconstruction() but here we instead assume that the restimated rating matrices 
+    have been pre-computed externally and are provided as inputs. 
+
+    """
     # `train`, `test` and `meta` are namedtuples:
     # train: R, L_train 
     # test:  T, L_test 
@@ -519,7 +525,7 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
 
     # Evaluate using a given performance score (since CF ensemble is primarily targeting imbalance class distributions, 
     # by defeaut, we will use F1 score)
-    reestimated['score_lh_maxvote'] = reestimated['score_baseline_maxvote'] = perf_score = f1_score(L_test, lh)
+    reestimated['score_lh_maxvote'] = reestimated['score_baseline'] = perf_score = f1_score(L_test, lh)
     scores.append((perf_score , {'lh': lh, 'p_threshold': p_threshold, 'name': 'lh_maxvote'}))
     msg += f'[result] Majority vote: F1 score with the original T:  {perf_score}\n'
 
@@ -573,11 +579,36 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
         msg += f"[result] Best settings ({mode}): {reestimated['best_params']['name']}, score: {scores_sorted[0][0]}\n"
         print(msg)
     if verbose > 1: 
-        print("[info] Reestiamted quantities are available through the following keys:")
+        print("[help] Reestiamted quantities are available through the following keys:")
         for k, v in reestimated.items(): 
             print(f'  - {k}')
 
     return reestimated
+
+def analyzer_pipeline(model, X, L, Pc, *, p_threshold=[], policy_threshold='fmax', **kargs):
+
+    # Optional Parameters
+    # -------------------
+    verbose = kargs.get('verbose', 1)
+    L_test = kargs.get('L_test', None) # A validation set to select the best algorithmic settings
+
+    analyzer = analyze_reconstruction(model, 
+                                      X=X,  # e.g. (R, T),
+                                      L=L,  # e.g. (L_train, L_estimated), 
+                                      Pc=Pc, p_threshold=p_threshold, 
+                                      policy_threshold=policy_threshold, n_train=n_train)
+
+    # Add conditions here: 
+    # 1. Re-estimating the unreliable entries only or re-estimate the entire rating matrix
+
+    highlight("Reestimate the entire rating matrix (X) with learned latent factors/embeddings")
+    reestimated = analyzer(L_test, unreliable_only=False, verbose=verbose)
+    highlight("Reestimate ONLY the unreliable entries in X with learned latent factors/embeddings")
+    reestimated = analyzer(L_test, unreliable_only=True, verbose=2) # use verbose level 2 to show keys of the return value
+
+    # [todo]
+
+    return
 
 def analyze_reconstruction(model, X, L, Pc, n_train=None, p_threshold=[], policy_threshold='fmax'): 
     """
@@ -674,7 +705,7 @@ def analyze_reconstruction(model, X, L, Pc, n_train=None, p_threshold=[], policy
 
         # Evaluate using a given performance score (since CF ensemble is primarily targeting imbalance class distributions, 
         # by defeaut, we will use F1 score)
-        reestimated['score_lh_maxvote'] = reestimated['score_baseline_maxvote'] = perf_score = f1_score(L_test, lh)
+        reestimated['score_lh_maxvote'] = reestimated['score_baseline'] = perf_score = f1_score(L_test, lh)
         scores.append((perf_score , {'lh': lh, 'p_threshold': p_threshold, 'name': 'lh_maxvote'}))
         msg += f'[result] Majority vote: F1 score with the original T:  {perf_score}\n'
 
@@ -728,7 +759,7 @@ def analyze_reconstruction(model, X, L, Pc, n_train=None, p_threshold=[], policy
             msg += f"[result] Best settings ({mode}): {reestimated['best_params']['name']}, score: {scores_sorted[0][0]}\n"
             print(msg)
         if verbose > 1: 
-            print("[info] Reestiamted quantities are available through the following keys:")
+            print("[help] Reestiamted quantities are available through the following keys:")
             for k, v in reestimated.items(): 
                 print(f'  - {k}')
  

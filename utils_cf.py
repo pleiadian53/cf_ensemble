@@ -2367,11 +2367,11 @@ def evalConfidenceMatrices(X, L, alpha=10.0, p_threshold=[], conf_measure='brier
     
     # Test: Wherever Pc is negative, the corresponding entries in Cn must be 0 (By constrast, C is a full/dense confidence matrix)
     assert np.all(Cn[Pc < 0]==0)
-    assert np.all(Cn[Pc > 0]>0)
+    assert np.all(Cn[Pc > 0]>=0)
 
-    # Color matrix should have 4 distinct values
+    # In general, a color matrix should have 4 distinct values but could have degenerative cases
     uniq_colors = np.unique(Pc.A if sparse.issparse(Pc) else Pc)
-    assert len(uniq_colors) >= 4, f"n_colors: {uniq_colors}"
+    assert len(uniq_colors) >= 2, f"n_colors: {uniq_colors}"
 
     return (Pc, C0, Cw, Cn)
 
@@ -2400,10 +2400,12 @@ def eval_confidence_given_color_matrix(X, L, Pc, *, alpha=10.0, p_threshold=[], 
     assert Pc.shape == X.shape
     if len(p_threshold) > 0: assert len(p_threshold) == X.shape[0]
 
-    # Color matrix should have (at least) 4 distinct values; could have other "colors" like neutrals representing ...
-    # ... entries with high uncertainty
+    # In principle, a color matrix should have (at least) 4 distinct values; more generally it could have 
+    # other colors such as "neutrals" representing entries with high uncertainty; in some cases, however, 
+    # the matrix could be "degenerative", leading up to less than 4 colors, having only has a 
+    # subset of colors among {TPs, TNs, FPs, FNs}
     uniq_colors = np.unique(Pc.A if sparse.issparse(Pc) else Pc)
-    assert len(uniq_colors) >= 4, f"n_colors: {uniq_colors}"
+    assert len(uniq_colors) >= 2, f"n_colors: {uniq_colors}"
 
     # Optional paramters 
     # --------------------
@@ -2435,7 +2437,8 @@ def eval_confidence_given_color_matrix(X, L, Pc, *, alpha=10.0, p_threshold=[], 
     
     # Test: Wherever Pc is negative, the corresponding entries in Cn must be 0 (By constrast, C is a full/dense confidence matrix)
     assert np.all(Cn[Pc < 0]==0)
-    assert np.all(Cn[Pc > 0]>0)
+    assert np.all(Cn[Pc > 0]>=0)
+    # print(f"Found n={np.sum(Cn[Pc > 0]==0)} zeros in Cn where Pc > 0")
 
     return (Pc, C0, Cw, Cn)
 
