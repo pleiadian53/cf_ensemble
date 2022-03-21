@@ -558,11 +558,11 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
 
         lh = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(R.T, L_train).predict(T.T)
         reestimated['score_lh_stacker'] = f1_score(L_test, lh) 
-        msg += f"[result] Stacking: F1 score with the original T:  {reestimated['score_orig_stacker']}\n"
+        msg += f"[result] Stacking: F1 score with the original T:  {reestimated['score_lh_stacker']}\n"
 
         lh_new = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(Rh.T, L_train).predict(Th.T)
         reestimated['score_lh2_stacker_pth_adjusted'] = f1_score(L_test, lh_new)
-        msg += f"[result] Stacking: F1 score with re-estimated Th: {reestimated['score_lh_stacker']}\n" 
+        msg += f"[result] Stacking: F1 score with re-estimated Th: {reestimated['score_lh2_stacker_pth_adjusted']}\n" 
 
         if verbose: print(msg)
 
@@ -575,8 +575,8 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
     reestimated['best_params'] = scores_sorted[0][1] # select the best setting according to the performance measure
 
     if verbose: 
-        mode = 'unreliable only' if unreliable_only else 'complete' # 'complete' reestimation or reestimating the entire rating matrix
-        msg += f"[result] Best settings ({mode}): {reestimated['best_params']['name']}, score: {scores_sorted[0][0]}\n"
+        # mode = 'unreliable only' if unreliable_only else 'complete' # 'complete' reestimation or reestimating the entire rating matrix
+        msg += f"[result] Best settings: {reestimated['best_params']['name']}, score: {scores_sorted[0][0]}\n"
         print(msg)
     if verbose > 1: 
         print("[help] Reestiamted quantities are available through the following keys:")
