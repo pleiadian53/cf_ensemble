@@ -896,6 +896,8 @@ def determine_target_type(loss_fn):
     return target_type
 def training_pipeline(input_model, input_data, **kargs):
     """
+    Load and transform input training data (from rating matrix format to user-item-pair format for CFNet), 
+    followed by iteratively training the model (i.e. training loop). 
 
 
     Paramters 
