@@ -290,10 +290,10 @@ def c_squared_loss(y_true, y_pred):
     colors =  y_true[:, 2]
     thresholds = y_true[:, 3]
 
-    mask_tp = tf.dtypes.cast( K.equal(colors, 2), dtype = tf.float32 )
-    mask_tn = tf.dtypes.cast( K.equal(colors, 1), dtype = tf.float32 )
-    mask_fp = tf.dtypes.cast( K.equal(colors,-2), dtype = tf.float32 )
-    mask_fn = tf.dtypes.cast( K.equal(colors,-1), dtype = tf.float32 )
+    mask_tp = tf.dtypes.cast( K.equal(colors, 2), dtype = tf.float32 ) # TP
+    mask_tn = tf.dtypes.cast( K.equal(colors, 1), dtype = tf.float32 ) # TN 
+    mask_fp = tf.dtypes.cast( K.equal(colors,-2), dtype = tf.float32 ) # FP
+    mask_fn = tf.dtypes.cast( K.equal(colors,-1), dtype = tf.float32 ) # FN
 
     # if TP, want y_pred >= y_true, i.e. the larger (the closer to 1), the better
     loss_tp = weights * K.square(K.maximum(y_label-y_pred, 0)) # if y_pred > y_label => y_label-y_pred < 0 => no loss ...
