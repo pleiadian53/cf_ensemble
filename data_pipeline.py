@@ -201,7 +201,46 @@ def make_sample_weights(R, C, Pc):
 
     return df_conf[col_value].values    
 
+def make_seq2seq_training_data(R, L, include_label=False, **kargs): 
+    """
+
+    Parameters
+    ----------
+    R: Rating matrix
+    L: Label matrix (e.g. a probability filter where 1 represents reliable entries and 0 represents unreliable entries)
+
+    Returns
+    -------
+    A 2-tuple (X, Y), where 
+    X: 
+    Y: 
+    """
+    import polarity_models as pmodel
+
+    # return (X, Y)
+    return pmodel.make_seq2seq_training_data(R, L, include_label, **kargs)
+
 def matrix_to_augmented_training_data2(R, C, Pc, *, p_threshold=[], **kargs): 
+    """
+    Similar to matrix_to_augmented_training_data() but outputs the target ("y_true") by column-stacking 
+    the label and other supporting information that CFNet's loss function depends on. 
+
+    A loss function typically takes on the label as a vector (y_true), with which the model prediction
+    (y_pred) is compared to define the loss. `y_true` can be continous values, such as the rating, that we wish for the
+    model to approximate; `y_true` can also be a vector of class labels in classification tasks. 
+
+    However, in a more general setting, we may wish to design a custom loss function that takes into account 
+    not only the label (e.g. ratings) but also other useful information that could help us learn the latent factors 
+    with desirable properties. These additional pieces of information could include, for instance, 
+    condidence scores (unpacked from C) and colors (unpacked from Pc), in which case, the "y_true" would then comprise 
+    three column vectors: 
+
+    1. ratings (which corresponds to the label typically considered when we deal with a regression problem approximating the rating)
+    2. confidence scores 
+    3. colors
+
+    The shape of `y_true` in this case is N x 3, where N is the sample size. 
+    """
     assert R.shape == C.shape
     assert R.shape == Pc.shape 
 
@@ -257,6 +296,11 @@ def matrix_to_augmented_training_data2(R, C, Pc, *, p_threshold=[], **kargs):
     return (X, np.column_stack([y, weights, colors])) # (X, y_augmented)-format
 
 def matrix_to_augmented_training_data(R, C, Pc, **kargs):
+    """
+    Given the rating matrix (R) and its corresponding confidence matrix (C) and color matrix (Pc), 
+    create training data in user-item-pair format for training CFNet model. 
+    """
+
     assert R.shape == C.shape
     assert R.shape == Pc.shape 
 
