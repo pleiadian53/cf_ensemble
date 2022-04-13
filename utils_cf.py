@@ -3469,6 +3469,53 @@ def shift(C, offset=-1.0):
         return sparse.csr_matrix(C)
     return C + offset
 
+def balance_and_scale_given_reliability_estimate(C, X, P, p_threshold, alpha=1.0, beta=1.0, gamma=0.5, **kargs):
+    """
+
+    Parameters
+    ----------
+    C: A confidence matrix 
+    X: A rating matrix 
+
+    P: Either a hard or a soft probability filter
+       
+       A hard probability filter is a 0-1 encoded matrix where 1s represent reliable entries and 0s represent unreliable entries
+
+       A soft probability filter is a (reliability) matrix where each entry represents a degree of reliability (estimated from a given 
+       polarity model such as a seq2seq model) of the underlying rating in `X`
+
+       
+
+    train_data: matrix quantities for the training set i.e. rating matrix, probability filter, confidence matrix for the training set
+    test_data: 
+
+    """     
+    assert C.shape == X.shape
+    assert P.shape == X.shape
+
+    # Confidence matrix and probability filter could be sparse matrices
+    C_is_sparse = False
+    if sparse.issparse(C): 
+        C = C.A
+        C_is_sparse = True  # convert back to sparse matrix when reweighting is done
+
+    P_is_sparse = False
+    if sparse.issparse(P):
+        P = P.A
+        P_is_sparse = True
+    
+    # Zero out unreliable entries 
+    C = P * C
+
+    # Re-scale confidence matrix
+    C = alpha * C
+    
+    # C is dense at this point, we may need to convert it back to sparse format
+    if C_is_sparse: # then Cn must also be sparse to be consistent
+        C = sparse.csr_matrix(C)
+
+    return C 
+
 def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, gamma=0.5,
         suppress_max_class=False, 
         is_cascade=True, discount_test=True,
@@ -3746,13 +3793,13 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
     
     if verbose: print('[info] class stats: {o}'.format(o=ret))
 
-    # ... C is dense at this point
+    # C is dense at this point, we may need to convert it back to sparse format
     if C_is_sparse or sparsify: # then Cn must also be sparse to be consistent
         C = sparse.csr_matrix(C)
 
     return C   
 # [alias]
-balance_class_weights = balance_and_scale
+balance_class_weights = balance_and_scale_cascade = balance_and_scale
 
 
 def verify_confidence_matrix(C, X, L, p_threshold, Po=None, U=[], measure='rank', message='', test_cases=[], plot=False, test_weight_constraints=True, seed=53): 

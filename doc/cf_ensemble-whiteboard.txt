@@ -1,10 +1,52 @@
 
+# Demo 5: Polarity Model
 
+
+####################################################################################
+setting: seq2seq without class label
+
+> shape(P_test): (5, 1250), shape(P_train): (5, 3750)
+Conflict in reliability matrix estimate: 8978 entries are different
+Error rate: 0.4788266666666667
+[info] Reliability threshold: [0.426 0.439 0.537 0.217 0.335]
+
+
+================================================================================
+Guesstimated labeling (on T) via seq2seq-based polarity model model
+================================================================================
+> Labeling accuracy: nan
+> Reliable-to-correct ratio: 0.4504
+> Precision: 0.4503999279360115, Recall: 0.9999996447603393
+> Predcitio(TP): 0.0625599899904016, Recall(TP): 0.999997442461784 => f1(TP): 0.11775331493651109
+> Error rate: 8.793597186048674e-05
+================================================================================
+Guesstimated labeling (on T) via MAJORITY VOTE
+================================================================================
+> Labeling accuracy: 0.3816
+> Reliable-to-correct ratio: 0.3816
+> Precision: 0.36868424995391447, Recall: 0.5236232598141173
+> Predcition(TP): 0.07478737499065158, Recall(TP): 0.7647039265884231 => f1(TP): 0.13624965311020593
+> Error rate: 0.00015790778939802301
+
+================================================================================
+Reestimate ONLY the unreliable entries in X with learned latent factors/embeddings
+================================================================================
+[info] From R to Rh, delta(Frobenius norm)= 72.29392778637829
+[info] From T to Th, delta(Frobenius norm)= 35.39703847058283
+[info] How different are lh and lh_new? 0.4224
+[result] Majority vote: F1 score with the original T:  0.18545837723919914
+[result] Majority vote: F1 score with re-estimated Th using original p_threshold: 0.199616122840691
+[result] Majority vote: F1 score with re-estimated Th: 0.2042755344418052
+
+[result] Stacking: F1 score with the original T:  0.09859154929577464
+[result] Stacking: F1 score with re-estimated Th: 0.19534883720930232
+
+####################################################################################
 
 
 # Todo 
 
-Performance tracker (algorithms)
+Performance tracker (algorithms	)
 
 evalLabels(): use majority vote 
 also tried kNN 

@@ -1,6 +1,38 @@
+
+# Tips 
+  1. include label in seq2seq model has benefits
+      + if not, the seq2seq model's accuracy is not good 
+           PREDICTION ACCURACY (%):
+           Train: 88.619, Test: 50.224
+         + also the gap between Ein and Eout is bigger
+      
+      > but can we avoid havin to estimate T's labels? 
+  
+
+# Conflict in reliability matrix is too HIGH
+
+
++ [info] loss_fn_name:
+
+what if: r_th_i = Pr[i][ M[i] == 1 ].min()? 
+
+
+
+r_th_i = Pr[i][ M[i] == 1 ].mean()
+
+> shape(P_test): (6, 1250), shape(P_train): (6, 3750)
+> `include_label` set to True => last row holds the (true) class labels for R and estimated labels for T ...
+> reliablity threshold for class label in training set: 0.9998739957809448
+Conflict in reliability matrix estimate: 10558 entries are different
+Error rate: 0.5630933333333333
+[info] Reliability threshold: [0.999 1.    0.826 0.062 0.115]
+
+
+
 ### Errors 
 
 ImportError: 
 The plotly.plotly module is deprecated,
 please install the chart-studio package and use the
 chart_studio.plotly module instead. 
+

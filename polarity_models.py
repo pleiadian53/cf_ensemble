@@ -29,6 +29,89 @@ class Polarity(object):
 # Polarity and color matrices
 ######################################################################
 
+def is_hard_filter(P):
+
+    if sparse.issparse(P): P = P.A
+    encoding = np.unique(P)
+    
+    if len(encoding) > 2:
+        return False 
+  
+    return encoding == {0, 1}
+
+def infer_probability_filter(X, L, P, p_th, verbose=0): 
+    """
+
+    Parameters
+    ----------
+    P: A "soft" probability filter estimated via a polarity model (e.g. a polarity classifier), in which 
+       the reliability of a rating (in R) is represented by a "soft" score between 0 and 1 (i.e. a scalar in [0, 1]); 
+       this is in contrast to a "hard" probaiilty filter where reliable entries are typically encoded by a 
+       "hard" 1 and unreliabe entries are encoded by a "hard" 0. 
+
+    R: A rating matrix 
+    L: The class label associated with the rating matrix R
+    p_th: probability thresholds  
+    """
+    R = T = None
+    if isinstance(X, (tuple, list)): 
+        R, T = X
+    else: 
+        R = X # assume that X contains only the training data
+    n_train = R.shape[1]
+
+    if sparse.issparse(P): P = P.A
+
+    Pr = Pt = None
+    if isinstance(P, (tuple, list)):
+        Pr, Pt = P
+        assert Pt.shape == T.shape
+    else: 
+        Pr = P
+    assert Pr.shape == R.shape
+
+    if len(L) > n_train: L = L[:, n_train]
+
+    # The input `P` must be a soft filter
+    assert not is_hard_filter(Pr), "Input probabilty filter is a hard filter! Please provide a soft filter."
+
+    # Infer proportion of reliable entries from the training set (i.e. R, rating matrix derived from the training set)
+    M, Lh = probability_filter(R, L, p_th)
+
+    # Global reliability threshold estiamted below may not be "reliable" :)
+    # n_reliable = (M == 1).sum()
+    # n_unreliable = (M == 0).sum()
+    # r_th = n_reliable/(M.size+0.0) # reliability threshold
+
+    # Infer a reliability threshold for each user/classifier using the training data
+    # NOTE: 
+    #   1. Reliability threshold may depend on the class label (can we really decouple reliability threshold from class label?)
+    r_th = []
+    for i in range(R.shape[0]):
+        # r_th_tp = Pr[i][(M[i] == 1) & (L == 1)].min() # reliability threshold for TPs
+        # r_th_tn = Pr[i][(M[i] == 1) & (L == 0)].min() # reliability threshold for TNs
+        
+        r_th_i = Pr[i][ M[i] == 1 ].min() # minimum reliability degree in order to be consider reliable
+        r_th_i_max = Pr[i][ M[i] == 0 ].max()
+
+        r_th.append(r_th_i)
+    r_th = np.array(r_th)
+
+    # [test] 
+    # For training data, we already have the reliability matrix (M) but let's double check if the estimate is consistent with 
+    # the one inferred from the true label (M)
+    M_prime = (Pr >= r_th.reshape((-1, 1))).astype(int) # note: .reshape turns r_th into a column vector 
+    if not np.array_equal(M, M_prime): 
+        n_diff = (M != M_prime).sum()
+        print(f"Conflict in reliability matrix estimate: { n_diff } entries are different")
+        print(f"Error rate: {n_diff/(M.size+0.0)}")
+
+    if Pt is not None: 
+        Mt = (Pt >= r_th.reshape((-1, 1))).astype(int) # note that `r_th` is the thresholds inferred only from training data
+        M = np.hstack((M, Mt))
+        
+    return M, r_th
+
 # source: utils_cf
 def probability_filter(X, L, p_th, *, target_label=None): 
     """
@@ -422,6 +505,7 @@ def make_seq2seq_training_data(R, Po=None, L=None, include_label=False, **kargs)
         assert len(p_threshold) > 0 and L is not None
         assert (len(p_threshold), len(L)) == R.shape
         Po = probability_filter(R, L, p_threshold)
+    if L is not None: assert len(L) == R.shape[1]
 
     assert R.shape == Po.shape
     
@@ -430,12 +514,17 @@ def make_seq2seq_training_data(R, Po=None, L=None, include_label=False, **kargs)
     X = [] # input sequences (one training instance consists of `n_users` ratings per data point, where `n_users` = R.shape[0])
     Y = [] # labels or output sequences
 
-    for j in range(R.shape[1]):
+    if not include_label: 
+        for j in range(R.shape[1]):
 
-        X.append( R[:, j].reshape(-1, 1) ) # number of "timesteps" is the number of classifiers/users, where ... 
-        # ... each object/rating is represented by 1 feature value, which is the rating itself
+            X.append( R[:, j].reshape(-1, 1) ) # number of "timesteps" is the number of classifiers/users, where ... 
+            # ... each object/rating is represented by 1 feature value, which is the rating itself
 
-        Y.append(Po[:, j].reshape(-1, 1) ) # 
+            Y.append(Po[:, j].reshape(-1, 1) ) # 
+    else: 
+        for j in range(R.shape[1]):
+            X.append( np.vstack( (R[:, j].reshape(-1, 1), L[j]) )) # Add the class label(s) to the end of the rating sequence
+            Y.append( np.vstack( (Po[:, j].reshape(-1, 1), L[j]) )) # Add the class label and assume positive class as having positive polarity
 
     X = np.array(X)
     Y = np.array(Y)

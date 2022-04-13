@@ -132,6 +132,8 @@ def get_cfnet_approximating_scores(n_users, n_items, n_factors, lr=0.001):
 class CFNet2(keras.Model):
     pass
 
+
+
 # kNN utilities
 ##########################################################################
 
@@ -390,6 +392,8 @@ def reestimate(model, X, n_train=None, **kargs):
     y_train_pred = model.predict(X_train) # Note: X_train is a dataframe
     y_test_pred =  model.predict(X_test) if is_cascade else np.array([]) # Note: X_test, if available, is a also dataframe  
     ####################################
+    # Rh = y_train_pred.reshape(R.shape)
+    # Th = y_test_pred.reshape(T.shape)
 
     # Put the prediction back into the rating-matrix format
     col_user = kargs.get('col_user', 'user')
@@ -458,7 +462,7 @@ def interpolate(X, Xh, Pc=None, C=None, L=[], p_threshold=[], use_confidence_wei
     # uc.interpolate(X1, X2, W1, W2)
     #   if W1[i,j]=1, then use X1[i, j]
     #   if W1[i,j]=0 => W2[i,j]=1 => use X2[i,j]; effectively replacing X1[i,j] by X2[i, j]
-    Xh_partial = uc.interpolate(X, Xh, W, 1.0-W) # replace X by Xs selectively according to W (and 1-W)
+    Xh_partial = uc.interpolate(X, Xh, W, 1.0-W) # replace X by Xh selectively according to W (and 1-W)
 
     return Xh_partial
 
@@ -657,6 +661,7 @@ def analyze_reconstruction(model, X, L, Pc, n_train=None, p_threshold=[], policy
         L = np.hstack([L_train, lh]) 
     else: 
         L_train, lh = L[:n_train], L[n_train:] # split L into L_train and lh; note that lh is NOT L_test 
+        # Note that the estimated label on the test set (lh) is really not needed here because it will be estimated from `Th` below
     
     # Color matrix (Pc_train, Pc_test, Pc)
     # if isinstance(Pc, (tuple, list)): 
@@ -785,13 +790,13 @@ def prepare_training_data(X, C, Pc, p_threshold, target_type='generic'):
     if target_type.startswith(('label', )):
         Lh = uc.estimateLabelMatrix(X, p_th=p_threshold)
         Xc, yc, weights, colors = dp.matrix_to_augmented_training_data(Lh, C, Pc)
-        # `weights`, `colors` are not used here
+        # Note: `weights`, `colors` are not used here
 
         sample_weights = dp.unravel(C, normalize=False) # Cn is a masked and balanced version of C0
         
     elif target_type.startswith(('prob', 'rating')):
         Xc, yc, weights, colors = dp.matrix_to_augmented_training_data(X, C, Pc) 
-        # `weights`, `colors` are not used here
+        # Note: `weights`, `colors` are not used here
         
         sample_weights = dp.unravel(C, normalize=False) # Cn is a masked and balanced version of C0
     else: # a more general case where `y_true` carries more than just the labels
@@ -888,10 +893,11 @@ def get_loss_function_name(loss_fn):
 def determine_target_type(loss_fn):
     # Uitlity function for `training_pipeline()`
     loss_fn_name = get_loss_function_name(loss_fn)
+    # print(f"[info] loss_fn_name: {loss_fn_name}") # e.g. MeanSquared
     target_type = 'generic'
     if loss_fn_name.lower().find('entropy') > 0: 
         return 'label'
-    if loss_fn_name.lower().startswith('meansquared') == 0: 
+    if loss_fn_name.lower().startswith('meansquared'): 
         return 'rating'
     return target_type
 def training_pipeline(input_model, input_data, **kargs):
@@ -1051,16 +1057,20 @@ def training_pipeline(input_model, input_data, **kargs):
     cf_model, loss_fn = input_model
 
     # How do we structure the training data? This depends on two factors: 
-    # 1. The quantitiy that the model attempts to approximate E.g. `rating`, `label`
-    # 2. The type of loss function E.g. the label (i.e. `y_true` by sklearn's convention) 
-    #    for the MSE and BCE losses has shape (n_instances, ), where n_instances refer to the training sample size
-    #    More complex loss functions can take into account not only the true labels (e.g. ratings) but also 
+    # 1. The quantitiy that the model attempts to approximate: `rating`, `label`, ...
+    # 2. The type of loss function:  
+    #    
+    #    The true label (i.e. `y_true` by sklearn's convention) that a MSE or a BCE losse expects is typically a 1D vector
+    #    meaning that it assumes the shape (n_instances, ), where `n_instances` refer to the training sample size
+    #    
+    #    More complex loss functions, however, may take into account not only the true labels (e.g. ratings) but also 
     #    confidence matrix, colors and probability thresholds, among others, and as a result will 
     #    on a more complex shape (n_instances, >=2) where the "label" of the training data becomes a matrix 
     target_type = kargs.get('target_type', determine_target_type(loss_fn)) # 'label', 'rating', 'generic'
     if verbose: print(f"[info] Confidence matrix type: {conf_type}, target data type: {target_type}")
 
     Xc, yc, sample_weights = prepare_training_data(X, C, Pc, p_threshold, target_type=target_type)
+    # Note: sample weights came from `C`
 
     # SGD training paramters
     #-----------------------
@@ -1083,6 +1093,158 @@ def training_pipeline(input_model, input_data, **kargs):
                                use_sample_weights=use_sample_weights) # 
 
     return model
+
+def training_with_reliability(input_model, input_data, **kargs):
+    """
+    Load and transform input training data (from rating matrix format to user-item-pair format for CFNet), 
+    followed by iteratively training the model (i.e. training loop). 
+
+
+    Todo
+    ----
+    1. Include the polarity model as part of the `input_model`
+    2. Include the method that estiamtes the probability filter (reliability matrix) as part of this pipeline 
+    3. Include the balancing and re-scaling method for the confidence matrix (C)
+
+    Paramters 
+    ---------
+    input_model: A 2-tuple (model, loss function)
+    input_data: A dictionary or a tuple with training data in the form of rating matrix and its companion quantities such as 
+                confidence matirx, probability filter and class labels, among others. 
+                
+                Note that contrary to training_pipeline(), the input data is expected to hold 
+                the rating matrix that combines both training and test set (cascade format); i.e. 
+                X = [R | T]. Similarly, all the rating matrix's companion matrices (e.g. confidence matrix)
+                should also be in the cascade format. 
+
+    Optional Parameters
+    -------------------
+    verbose 
+
+    alpha: Scaling factor for confidence matrix 
+    
+    policy_threshold: The policy/strategy for determining optimial probability threshold (e.g. 'fmax')
+    
+    lh: Pre-computed estiamted labels for the test split (T)
+    fold_number: 
+
+    target_type: The type of training data; this determines how training data is structureed
+
+                How do we structure the training data? This depends on two factors: 
+
+                1. The quantitiy that the model attempts to approximate E.g. 'rating', 'label'
+
+                   - Set `target_type` to 'rating' if the goal is to approximate the rating (e.g. the 
+                    probability score in entries of X, that is, X[i][j]). A suggested loss function 
+                    in this case is the mean square loss (or MSE)
+       
+                   - Set `target_type` to 'label' if the goal is to approximate the labeling associated 
+                     with the rating matrix (X); also see utils_cf.estimateLabelMatrix()
+                     This is useful for entropy-based function such as binary entropy loss or BCE loss
+
+                2. The type of loss function E.g. the label (i.e. `y_true` by sklearn's convention). 
+
+                   Simple loss functions like MSE and BCE have the shape (n_instances, ), where 
+                   we've used `n_instances` refer to the training sample size. 
+
+                   More complex loss functions can take into account not only the true labels (e.g. ratings) but also 
+                   confidence matrix, colors and probability thresholds, among others, and as a result will 
+                   on a more complex shape (n_instances, >=2) where the "label" of the training data becomes a matrix 
+
+                   - Set `target_type` to 'generic' if this is the case. 
+
+    test_size: 
+    epochs: 
+    batch_size: 
+
+    """
+    import data_pipeline as dp 
+    import utils_cf as uc
+    from utils_sys import highlight
+    from analyzer import is_sparse
+    import matplotlib.pylab as plt
+
+    # General Paramters 
+    # -----------------
+    verbose = kargs.get("verbose", 1)
+
+    # Misc Parameters 
+    #---------------------
+    policy_threshold = kargs.get('policy_threshold', 'fmax') # method for optimizing the probability threshold 
+    fold_number = kargs.get('fold_number', 0) # dataset identifier used in cross validation or multiple runs of subsampling
+
+    # Load pre-trained level-1 data (associated with a given fold number)
+    ####################################################################################
+    # a. Basic quantifies
+    L_test = None # Test data is optional; evaluation is conducted outside this training loop
+    # input data is a 5-tuple 
+    if isinstance(input_data, dict): 
+        X, U, L_train = input_data['X'], input_data['U'], input_data['L_train']
+        P = input_data['P'] # probability filter
+        C = input_data['C']
+        L_test = input_data.get('L_test', None) # Test data is optional
+    elif isinstance(input_data, (tuple, list)): 
+        assert len(input_data) >= 4
+        X, P, C, U, L_train, *rest = input_data
+        if len(rest) > 0: 
+            L_test = rest[0]
+
+    # Both the confidence matrix and the probability filter (representing reliability of X[i][j]) can be sparse ... 
+    # ... if so, convert them to the dense format
+    if sparse.issparse(P): P = P.A 
+    if sparse.issparse(C): C = C.A
+ 
+    n_train = len(L_train)
+    assert len(U) == X.shape[0]
+
+    # b. Derived quantities
+    p_threshold = uc.estimateProbThresholds(X[:,:n_train], L=L_train, pos_label=1, policy=policy_threshold)    
+
+    # Load pre-defined model (e.g. CFNet)
+    ####################################################################################
+    cf_model, loss_fn = input_model
+
+
+    # Prepare training data
+    ####################################################################################
+
+    # How do we structure the training data? This depends on two factors: 
+    # 1. The quantitiy that the model attempts to approximate: 1) the rating,  2) the (class) label, ... 
+    # 2. The type of loss function: 
+    #    a) Simple loss function, where both `y_true` (true label) and `y_pred` (predicted label) are 1-D vectors
+    #       For instances, the `y_true` for the MSE and BCE losses typically assume the shape (n_instances, ), 
+    #       where n_instances refer to the training sample size
+    #    b) More complex loss functions may take into account not only the true labels (e.g. ratings) but also 
+    #       confidence matrix, colors and probability thresholds, among others, and as a result will 
+    #       on a more complex shape (n_instances, >=2) where the "label" of the training data becomes a matrix 
+    target_type = kargs.get('target_type', determine_target_type(loss_fn)) # 'label', 'rating', 'generic'
+    if verbose: print(f"[info] target data type: {target_type}")
+
+    Xc, yc, sample_weights = prepare_training_data(X, C, P, p_threshold, target_type=target_type)
+
+    # SGD training paramters
+    #-----------------------
+    epochs = kargs.get('epochs', 100)
+    batch_size = kargs.get('batch_size', 64)
+    test_size = kargs.get('test_size', 0.1)
+    use_sample_weights = kargs.get('use_sample_weights', True) # if True, then use sample weights whenever they are available
+    #-----------------------
+
+    # Training Parameters
+    # -------------------
+    # test_size 
+    # batch_size 
+    # epochs
+    # lr: learning rate => this goes into model definition
+    
+    # model, loss_fn = input_model
+    model = training_loop(input_model=input_model, input_data=(Xc, yc, sample_weights), 
+                               test_size=test_size, batch_size=batch_size, epochs=epochs, 
+                               use_sample_weights=use_sample_weights) # 
+
+    return model
+# [alias]
+training_pipeline2 = training_with_reliability
 
 # Demo 
 #######################################################
