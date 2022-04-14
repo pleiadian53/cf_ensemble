@@ -2326,7 +2326,7 @@ def evalConfidenceMatrix(X, L=[], **kargs):
 
     return (Cui, Pc, p_th)
 
-def evalConfidenceMatrices(X, L, alpha=10.0, p_threshold=[], conf_measure='brier', policy_threshold='fmax', **kargs): 
+def evalConfidenceMatrices(X, L, *, P=None, alpha=10.0, p_threshold=[], conf_measure='brier', policy_threshold='fmax', **kargs): 
     """
     Compute confidence matrices in the following format: 
 
@@ -2334,13 +2334,23 @@ def evalConfidenceMatrices(X, L, alpha=10.0, p_threshold=[], conf_measure='brier
     Cw: Re-weighted confidence matrix 
     Cn: Masked confidence matrix
 
+    Parameters
+    ----------
+    X: Rating matrix
+    L: class labels 
+    P: probability filter 
+       
+       If `P` is provided, the confidence matrix will be filtered by it with the unreliable entries zeroed-out
+       If not provided, the color matrix (Pc) will be the default probability filter
+
+
     """
     import scipy.sparse as sparse
 
     # Optional parameters
     ##################################################
     fold_number = kargs.get('fold_number', 0) # for debugging only
-    n_train = kargs.get('n_train', -1) # used to separate X into R and T, from which to estimate `p_threshold`
+    n_train = kargs.get('n_train', -1) # used to separate X into R and T, from which to estimate `p_threshold` 
     verbose = kargs.get('verbose', 0)
     U = kargs.get("U", []) # the set of users/classifiers; for debug/test only
     is_cascade = kargs.get('is_cascade', False) # True of X contains both R and T; false otherwise
@@ -2355,25 +2365,42 @@ def evalConfidenceMatrices(X, L, alpha=10.0, p_threshold=[], conf_measure='brier
                                  verbose=verbose) 
     C0, Pc, p_threshold, *CX_res = CX
 
+    # Set probability filter 
+    Pf = prob_filter = Pc if P is None else P # If the filter is not provided, use the color matrix as default
+
+    # [test]
+    # The filter must be in polarity format i.e. {-1, 1}-encoding or in general {-1, 0, 1}-encoding to consider neutral particles
+    filter_is_sparse = False
+    if sparse.issparse(Pf): 
+        Pf = Pf.A
+        filter_is_sparse = True
+
     # Cw: A re-weighted (dense) confidence matrix in which confidence scores are adjusted to take into account 
     #     the disparity in sample sizes (e.g. the size of TPs is usually much smaller than that of TNs in class-imbalanced data)
-    Cw = balance_and_scale(C0, X=X, L=L, Po=Pc, p_threshold=p_threshold, U=U, 
+    Cw = balance_and_scale(C0, X=X, L=L, Po=Pf, p_threshold=p_threshold, U=U, 
                         alpha=alpha, conf_measure=conf_measure, n_train=n_train, verbose=verbose)
 
-    # Cn: A masked confidence matrix where the confidence scores associated with FPs and FNs are set to 0
-    Cn = mask_neutral_and_negative(C0, Pc, is_unweighted=False, weight_negative=0.0, sparsify=True)
-    Cn = balance_and_scale(Cn, X=X, L=L, Po=Pc, p_threshold=p_threshold, U=U, 
+    # Mask (raw) confidence matrix with a filter `Pf`
+    # Cn: A masked confidence matrix where the confidence scores are set to 0 for those associated with FPs, FNs (and neutral entries if they exist)
+    Cn = mask_by_filter(C0, Pf, is_unweighted=False, weight_negative=0.0, sparsify=True)
+    Cn = balance_and_scale(Cn, X=X, L=L, Po=Pf, p_threshold=p_threshold, U=U, 
                         alpha=alpha, conf_measure=conf_measure, n_train=n_train, verbose=verbose)
     
     # Test: Wherever Pc is negative, the corresponding entries in Cn must be 0 (By constrast, C is a full/dense confidence matrix)
-    assert np.all(Cn[Pc < 0]==0)
-    assert np.all(Cn[Pc > 0]>=0)
+    if verbose: 
+        # NOTE: Cannot do Cn[Pf <= 0.0]==0, which leads to NotImplementedError:  >= and <= don't work with 0.
+        assert np.all(Cn[Pf < 0]==0)
+        assert np.all(Cn[Pf > 0]>=0)
 
     # In general, a color matrix should have 4 distinct values but could have degenerative cases
-    uniq_colors = np.unique(Pc.A if sparse.issparse(Pc) else Pc)
+    uniq_colors = np.unique(Pf)
     assert len(uniq_colors) >= 2, f"n_colors: {uniq_colors}"
 
-    return (Pc, C0, Cw, Cn)
+    # Convert the filter back to sparse format if it was originally in such format
+    if filter_is_sparse: 
+        Pf = sparse.csr_matrix(Pf)
+
+    return (Pf, C0, Cw, Cn)
 
 def eval_confidence_given_color_matrix(X, L, Pc, *, alpha=10.0, p_threshold=[], conf_measure='brier', policy_threshold='fmax', **kargs): 
     # from sklearn.metrics import brier_score_loss
@@ -3181,7 +3208,7 @@ def filter_along_user_axis(C, X, L=[], policy='prior', ratio_small_class=0, fact
     #           ratio: a heuristic or an estimate for the proportion of the minority class (can be more conservative then prior)
 
     thresholds = kargs.get('p_threshold', [])  # probability thresholds, only used in unsupervised mode when attempting to pass the thresholds estimated from training split 
-    Mc = np.ones(X.shape, dtype=int) # all True 2D array (True: retain, False: set to a fill value)
+    Pf = np.ones(X.shape, dtype=int) # all True 2D array (True: retain, False: set to a fill value)
     if not tSupervised: # not supervised when L is not given
         # >>> not really "unsupervised" in the sense that we still use the labels L to estimate ratio_small_class
 
@@ -3205,7 +3232,7 @@ def filter_along_user_axis(C, X, L=[], policy='prior', ratio_small_class=0, fact
         # no labels, no thresholds => conservative estimate using ratio_small_class
         # steps: given (conservative) ratio -> (+, k highest proba) || (-, k lowest proba)
         #                                      ~ two sided filter
-        Mc = maskEntries(X, L=[], p_th=thresholds, ratio_small_class=ratio_small_class)  # top-low symmetric (i.e. top k highest: '+' top k lowest: '-')
+        Pf = maskEntries(X, L=[], p_th=thresholds, ratio_small_class=ratio_small_class)  # top-low symmetric (i.e. top k highest: '+' top k lowest: '-')
         # for i in range(R.shape[0]):
         #     k = k_high
         #     cols_high = np.argsort(R[i])[:-k-1: -1]  # indices of highest probabilities (these are likely to be better probability estimates of the positive)
@@ -3229,7 +3256,7 @@ def filter_along_user_axis(C, X, L=[], policy='prior', ratio_small_class=0, fact
         # => mask the entries with inconsistent labeling according to the label estimate determined by the probabilty thresholds
         # steps: Given label vector -> class prior -> prob thresholds -> Lh -> compare Lh with L -> select those consistent
         #        if p_th is given, then it takes precedence
-        Mc = maskEntries(X, L=L, p_th=thresholds, balance_class=balance_class, min_label=minClass) # use L to estimate p_th, which determines Lh; then compare Lh against L, keeping only those that are consistent
+        Pf = maskEntries(X, L=L, p_th=thresholds, balance_class=balance_class, min_label=minClass) # use L to estimate p_th, which determines Lh; then compare Lh against L, keeping only those that are consistent
     ### 
 
     mtype = kargs.get('mtype', '?')  # input matrix type: train, test, dev, generic, ... 
@@ -3320,13 +3347,13 @@ def mask_over(X, L, C=None, U=None, ratio_users=0.5,
     div('(mask_over) Using pre-computed proba thresholds? {} | (est) labels given? {} | supervised? {} ... (verify)'.format(
         len(p_threshold) > 0, len(labels) > 0, supervised)) 
 
-    Mc = None
+    Pf = None
     if kind.startswith('i'):  # select entries item by item (this ensures that all data points are represented)
         # mode: supervised (passing labels), or unsupervised (not passing labels) but has an estimate of ratio_small_class
         
         # ratio_repr: 0.5 => each item/datum should be represnted by at most 50% of the BP predictive scores whenever possible ... 
         # ... sometimes less if enough BPs can be identified that produce consistent predictions with the true labels
-        Mc = filter_along_item_axis(C, X, L=labels, 
+        Pf = filter_along_item_axis(C, X, L=labels, 
                 p_threshold=p_threshold,
                 ratio_users=ratio_users, ratio_small_class=ratio_small_class, 
                     supervised=supervised, 
@@ -3336,12 +3363,12 @@ def mask_over(X, L, C=None, U=None, ratio_users=0.5,
                         estimated_labels=estimated_labels,
 
                         pos_label=pos_label, neg_label=neg_label, marker=marker, fold=fold)  # fold is only used for messaging and debugging
-        # ... entries in Mc: {-1, 0, 1}
+        # ... entries in Pf: {-1, 0, 1}
      
     elif kind.startswith('u'):  
 
         # if L is given, then ratio_small_class is ignored
-        Mc = filter_along_user_axis(C, X, L=labels, 
+        Pf = filter_along_user_axis(C, X, L=labels, 
                 p_threshold=p_threshold,
                 ratio_small_class=ratio_small_class, 
                     supervised=supervised, 
@@ -3365,7 +3392,7 @@ def mask_over(X, L, C=None, U=None, ratio_users=0.5,
         
         print('(mask_over) kind=polarity | constrained? {}, stochastic? {}, estimate_sample_type? {} | policy_polarity: {}'.format(constrained, 
             stochastic, estimate_sample_type, policy_polarity))
-        Mc = mask_along_item_axis_by_polarity(R, Lr, p_th=p_threshold, T=T, 
+        Pf = mask_along_item_axis_by_polarity(R, Lr, p_th=p_threshold, T=T, 
                 Lt=test_labels,   # test labels; only used for testing
                 C=C,    # may be useful in polarity modeling
                 U=U,
@@ -3376,7 +3403,7 @@ def mask_over(X, L, C=None, U=None, ratio_users=0.5,
                     ratio_users=ratio_users,
                     pos_label=pos_label, 
                         verbose=True, index=fold) 
-        assert Mc.shape == T.shape
+        assert Pf.shape == T.shape
         # C = Ct 
     else:
         raise NotImplementedError('Unrecognized mask policy: %s' % kind)
@@ -3384,22 +3411,22 @@ def mask_over(X, L, C=None, U=None, ratio_users=0.5,
     # masked C is the result of applying mask to original C
     # i.e. C[mask] = marker, where mask is a binary matrix; entries of 1s are masked, meaning that these 'ratings' are overwritten by marker
     
-    ### interpreting polarity matrix Mc 
+    ### interpreting polarity matrix Pf 
     # if C is None: 
-    #     return Mc 
+    #     return Pf 
 
     # modulate confidence weights
-    # C[Mc == 0] = 0.0 # neutral particles do not entire into the optimization objective
+    # C[Pf == 0] = 0.0 # neutral particles do not entire into the optimization objective
 
     # re-interpret polarity matrix so that 0: not preferred, 1: preferred
-    # Mc[Mc == 0] = 0  # neutral particles are considered not preferred but it does't matter eventually
-    # Mc[Mc == -1] = 0
+    # Pf[Pf == 0] = 0  # neutral particles are considered not preferred but it does't matter eventually
+    # Pf[Pf == -1] = 0
 
     # [test] 
     # run_analysis()   
     # ... defer this to the main subroutine toConfidenceMatrix.balance_and_scale()
 
-    return Mc  
+    return Pf  
 
 # used in computing confidence matrix in 'tradeoff' mode (trade of between approximating probabilities and labels)
 def mask_over_dual(C, X, L, ratio_users=0.5, 
@@ -3469,7 +3496,7 @@ def shift(C, offset=-1.0):
         return sparse.csr_matrix(C)
     return C + offset
 
-def balance_and_scale_given_reliability_estimate(C, X, P, p_threshold, alpha=1.0, beta=1.0, gamma=0.5, **kargs):
+def balance_and_scale_simple(C, X, P, p_threshold, alpha=100.0, **kargs):
     """
 
     Parameters
@@ -3549,8 +3576,7 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
 
 
     """
-    # import scipy.sparse as sparse
-   
+    # import scipy.sparse as sparse   
     C_is_sparse = False
     if sparse.issparse(C): 
         C = C.A # C.toarray()
@@ -3572,16 +3598,36 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
     sparsify = kargs.get('sparsify', True)
     verbose = kargs.get('verbose', 1)
 
+
+    # First, consider a few cases that may lead to premature return
+    #######################################################################################
+
     ret = classPrior(L, labels=[0, 1], ratio_ref=0.1, verbose=False)
-    
     if ret['n_min_class'] == 0: 
         # label dtpye 
         lt = np.random.choice(L, 1)[0]
         print('(balance_and_scale) Warning: No minority class found in this batch => No-op! | n_max: {n_max}, n_min: {n_min} | dtype(L): {dtype} (expected int), value: {val}'.format(
             n_max=ret['n_max_class'], n_min=ret['n_min_class'], dtype=type(lt), val=lt ))
         # multiple = ret['n_max_class']/(ret['n_min_class']+1)   # n-/n+ 
-        return 
-        
+
+        # No-op: return `C` as it is
+        return C  # ... premature return case #1 
+
+    # Determine the probability filter
+    Pf, Lh = polarity_matrix(X, L, p_threshold) # X, pth -> Lh | L -> Pf
+    if Po is not None: # then we need (L, p_threshold to determine Po)
+       Pf = Po.A if sparse.issparse(Po) else Po
+
+    # If `Pf` is a soft filter (where reliability is encoded as a continous value between 0 and 1 instead of a strictly 0-1 encoding), 
+    # then we can no longer re-distribute confidence weights by counting TPs, TNs, FPs, FNs => use simpler balance_and_scale call instead
+    if not pmodel.is_hard_filter(Pf): 
+        # raise ValueError("Input probabilty filter may be a soft filter: Use `balance_and_scale_simple()` instead!") 
+        print('(balance_and_scale) Soft filter detected: Reverting to simple balancing and scaling ...')   
+        return balance_and_scale_simple(C, X, P=Pf, p_threshold=p_threshold, alpha=alpha, **kargs)
+        # ... premature return case #2 
+
+    #######################################################################################
+    # [test]
     multiple = ret['n_max_class']/(ret['n_min_class'])   # n-/n+
     min_class, max_class = ret['min_class'], ret['max_class']
 
@@ -3607,27 +3653,24 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
         #     unmask(C, L, U=U, test_cases=test_cases)
         pass
 
+    #######################################################################################
     ### A. re-weighting at global scale 
 
-    Mc, Lh = polarity_matrix(X, L, p_threshold) # X, pth -> Lh | L -> Mc
-    if Po is not None: # then we need (L, p_threshold to determine Po)
-       Mc = Po.A if sparse.issparse(Po) else Po
-
-    # Mc = Mc.astype(bool)
+    # Pf = Pf.astype(bool)
     w_min = np.min(C[C>0.0])
-    # assert all(C[~Mc] == w_min), "FP and FN entries have non-mininum weights! w_min: {}".format(w_min)
+    # assert all(C[~Pf] == w_min), "FP and FN entries have non-mininum weights! w_min: {}".format(w_min)
 
     # [test] before and after reweighting 
-    # weights_min_prior = C[Lh == min_class] # no need to apply Mc as in C[Mc & Lh == min_class]
-    # weights_max_prior = C[Lh == max_class] # C[Mc & Lh == max_class]
+    # weights_min_prior = C[Lh == min_class] # no need to apply Pf as in C[Pf & Lh == min_class]
+    # weights_max_prior = C[Lh == max_class] # C[Pf & Lh == max_class]
     # print('... Before re-weighting | Positive(+) | 5 numbers: {}'.format(common.five_number(weights_min_prior)))
     # print('... Before re-weighting | Negative(-) | 5 numbers: {}'.format(common.five_number(weights_max_prior)))
 
     # the decision rules below work for both regular polarity matrix {-1, 0, 1} and color matrix {-2, -1, 0, 1, 2}
-    cells_tp = (Mc > 0) & (Lh == min_class) # assuming min_class or minority class is positive
-    cells_tn = (Mc > 0) & (Lh == max_class) # assuming max_class or majority class is negative
-    cells_fp = (Mc < 0) & (Lh == min_class)
-    cells_fn = (Mc < 0) & (Lh == max_class)
+    cells_tp = (Pf > 0) & (Lh == min_class) # assuming min_class or minority class is positive
+    cells_tn = (Pf > 0) & (Lh == max_class) # assuming max_class or majority class is negative
+    cells_fp = (Pf < 0) & (Lh == min_class)
+    cells_fn = (Pf < 0) & (Lh == max_class)
 
     msg = ''
     Wtp = C[ cells_tp ]
@@ -3670,13 +3713,13 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
     #     multiple_eff = Wtn/(Wtp+0.0)
     #     div('(balance_and_scale) W(TP): {} <? W(TN): {} | multiple<tn/tp>: {} | w_min: {}'.format(Wtp, Wtn, multiple_eff, w_min))
         
-    #     # C[Mc & Lh == min_class] = C[Mc & Lh == min_class] * multiple_eff
+    #     # C[Pf & Lh == min_class] = C[Pf & Lh == min_class] * multiple_eff
     #     C[Lh == min_class] = C[Lh == min_class] * multiple_eff
     # else: 
     #     raise ValueError("W(tp) > W(tn)? This would not occur in highly-skewed data | W(tp):{}, W(tn): {}".format(Wtp, Wtn))
     #     # multiple_eff = Wtp/(Wtn+0.0)
     #     # div('(balance_and_scale) W(TP): {} > W(TN): {} ???| multiple<tn/tp>: {} | w_min: {}'.format(Wtp, Wtn, multiple_eff, w_min))
-    #     # C[Mc & Lh == max_class] = C[Mc & Lh == max_class] * multiple_eff
+    #     # C[Pf & Lh == max_class] = C[Pf & Lh == max_class] * multiple_eff
 
     # up-regulating positive sample weights (and down-regulating negative sample weights)
 
@@ -3705,8 +3748,8 @@ def balance_and_scale(C, X, L, p_threshold, Po=None, U=[], alpha=1.0, beta=1.0, 
         Ct = Ct * gamma # discount the entire test split
         C = np.hstack([Cr, Ct])
 
-    # weights_min = C[Lh == min_class] # C[Mc & Lh == min_class]
-    # weights_max = C[Lh == max_class] # C[Mc & Lh == max_class]
+    # weights_min = C[Lh == min_class] # C[Pf & Lh == min_class]
+    # weights_max = C[Lh == max_class] # C[Pf & Lh == max_class]
     Wtp = C[ cells_tp ]
     Wtn = C[ cells_tn ]
     Wfp = C[ cells_fp ]
@@ -3819,21 +3862,21 @@ def verify_confidence_matrix(C, X, L, p_threshold, Po=None, U=[], measure='rank'
     highlight("\n(verify_confidence_matrix) Are the confidence scores taking on values as expected?\n")
     if message: highlight(message, symbol='-', border=1)
 
-    # Mc, Lh = polarity_matrix(X, L, p_threshold) # X, pth -> Lh | L -> Mc
+    # Pf, Lh = polarity_matrix(X, L, p_threshold) # X, pth -> Lh | L -> Pf
     Pc, Lh = color_matrix(X, L, p_threshold) 
-    Mc, Lh2 = polarity_matrix(X, L, p_threshold)
+    Pf, Lh2 = polarity_matrix(X, L, p_threshold)
     # ... assuming that both C and Po are dense array
     assert np.sum(Lh != Lh2) == 0
 
-    # Mc = Mc.astype(bool)  # if not booleanized, then C[Mc] turns into a 3D array, which then could overwhelm the memory
+    # Pf = Pf.astype(bool)  # if not booleanized, then C[Pf] turns into a 3D array, which then could overwhelm the memory
     w_min_abs = 0.0
 
     msg = '' 
     if test_weight_constraints: 
 
         # Note that these statistics depend on the filtering mechanism and whether L contains estimated labels
-        n_correct = np.sum(Mc > 0)
-        n_incorrect = np.sum(Mc < 0)
+        n_correct = np.sum(Pf > 0)
+        n_incorrect = np.sum(Pf < 0)
         msg += '[verify] n(TP+TN): {}, n(FP+FN): {}, ratio: {}\n'.format(n_correct, n_incorrect, n_correct/(n_correct+n_incorrect+0.0) )
 
     # Weight distribution
@@ -3847,8 +3890,8 @@ def verify_confidence_matrix(C, X, L, p_threshold, Po=None, U=[], measure='rank'
     Wtn = C[Pc == 1]
 
     # Also verify the weight using polarity matrix
-    Wtp2 = C[(L == 1) & (Mc == 1)]
-    Wtn2 = C[(L == 0) & (Mc == 1)]
+    Wtp2 = C[(L == 1) & (Pf == 1)]
+    Wtn2 = C[(L == 0) & (Pf == 1)]
     assert np.isclose(np.sum(Wtp), np.sum(Wtp2)), f"np.sum(Wtp) via color matrix: {np.sum(Wtp)} <> {np.sum(Wtp2)} via polarity matrix!"
     assert np.isclose(np.sum(Wtn), np.sum(Wtn2)), f"np.sum(Wtn) via color matrix: {np.sum(Wtn)} <> {np.sum(Wtn2)} via polarity matrix!"
     
@@ -3899,8 +3942,8 @@ def verify_confidence_matrix(C, X, L, p_threshold, Po=None, U=[], measure='rank'
             # for cl in [1, 0, ]: # foreach class
             idx_pos = np.where(L == 1)[0]
             idx_neg = np.where(L == 0)[0]
-            idx_tp = np.where( (L == 1) & (Mc[i] > 0) )[0] 
-            idx_tn = np.where( (L == 0) & (Mc[i] > 0) )[0]
+            idx_tp = np.where( (L == 1) & (Pf[i] > 0) )[0] 
+            idx_tn = np.where( (L == 0) & (Pf[i] > 0) )[0]
 
             scores_tp = C[i][idx_tp]
             scores_tn = C[i][idx_tn]
@@ -4306,7 +4349,7 @@ def toConfidenceMatrix(X, L, **kargs):
 
     # Old parameters for polarity modeling (not considered at the moment)
     #################################################################
-    # Mc = None
+    # Pf = None
     # tConservative = True
     # isPolarityMatrix = True
     #################################################################
@@ -4343,7 +4386,7 @@ def toConfidenceMatrix(X, L, **kargs):
         #     # for test split, consider unmask
         #     assert n_zeros > 0
 
-        if verbose: print('[verify] Cui, Mc converted to sparse matrix.')
+        if verbose: print('[verify] Cui, Pc converted to sparse matrix.')
     else: 
         n_zeros = np.sum(Pc == 0)
         n_nonzeros = np.sum(Pc != 0)
@@ -5410,31 +5453,31 @@ def predict_by_factors(P, Q, canonicalize=True, name='X'):
   
     return Xh    
 
-def ratio_of_alignment2(Xpf, Mc, Lh, verify=True, verbose=True, message=''):
-    return pmodel.ratio_of_alignment2(Xpf, Mc, Lh, verify=verify, verbose=verbose, message=message)
+def ratio_of_alignment2(Xpf, Pf, Lh, verify=True, verbose=True, message=''):
+    return pmodel.ratio_of_alignment2(Xpf, Pf, Lh, verify=verify, verbose=verbose, message=message)
 
-def ratio_of_alignment(Xpf, Mc, verify=True, target_label=None):
+def ratio_of_alignment(Xpf, Pf, verify=True, target_label=None):
     
-    return pmodel.ratio_of_alignment(Xpf, Mc, verify=verify, target_label=target_label) 
+    return pmodel.ratio_of_alignment(Xpf, Pf, verify=verify, target_label=target_label) 
     # rc: overall considerig both 0 and 1, rc_correct: consider only correct predictions (i.e. TP & TN)
 
-def eval_alignment_by_precision(Xpf, Mc, Lh, by='alignment'):
+def eval_alignment_by_precision(Xpf, Pf, Lh, by='alignment'):
     """
     Params
     ------
     policy: 
-        'agreement': the fraction of entries in Xpf that is consistent with correctness matrix (Mc)
+        'agreement': the fraction of entries in Xpf that is consistent with correctness matrix (Pf)
            objective: the preferred entries should those that correspond to correct predictions 
 
         'precision': TP/(TP+FP) computed from preferred entries (Xpf == 1)
     """
-    return pmodel.eval_alignment_by_precision(Xpf, Mc, Lh, by=by)
+    return pmodel.eval_alignment_by_precision(Xpf, Pf, Lh, by=by)
 
-def eval_alignment_by_recall(Xpf, Mc, Lh, by='alignment'): 
-    return pmodel.eval_alignment_by_recall(Xpf, Mc, Lh, by=by)
+def eval_alignment_by_recall(Xpf, Pf, Lh, by='alignment'): 
+    return pmodel.eval_alignment_by_recall(Xpf, Pf, Lh, by=by)
 
 # def eval_alignment_by_fscore(): 
-def eval_alignment_by_fbeta(Xpf, Mc, Lh, by='preference', beta=1.0): 
+def eval_alignment_by_fbeta(Xpf, Pf, Lh, by='preference', beta=1.0): 
     """
 
     Params
@@ -5445,12 +5488,12 @@ def eval_alignment_by_fbeta(Xpf, Mc, Lh, by='preference', beta=1.0):
     beta < 1 lends more weight to precision, while beta > 1 favors recall 
     (beta -> 0 considers only precision, beta -> inf only recall)
     """
-    return pmodel.eval_alignment_by_fbeta(Xpf, Mc, Lh, by=by, beta=beta) # f_beta/(f_beta_bar+1.0)
+    return pmodel.eval_alignment_by_fbeta(Xpf, Pf, Lh, by=by, beta=beta) # f_beta/(f_beta_bar+1.0)
 
-def eval_alignment_minimize_fpfn(Xpf, Mc, Lh):
-    return pmodel.eval_alignment_minimize_fpfn(Xpf, Mc, Lh)
+def eval_alignment_minimize_fpfn(Xpf, Pf, Lh):
+    return pmodel.eval_alignment_minimize_fpfn(Xpf, Pf, Lh)
 
-def eval_alignment_hit_to_miss_ratio2(Xpf, Mc, Lh, error_avoidance=False): 
+def eval_alignment_hit_to_miss_ratio2(Xpf, Pf, Lh, error_avoidance=False): 
     """
 
 
@@ -5460,31 +5503,31 @@ def eval_alignment_hit_to_miss_ratio2(Xpf, Mc, Lh, error_avoidance=False):
         ==> n_hit(TP): 1101, n_missed(FP): 6885 → Large?
         ==> n_hit(FP): 3880, n_missed(TP): 511 → Small?
     """
-    return pmodel.eval_alignment_hit_to_miss_ratio2(Xpf, Mc, Lh, error_avoidance=error_avoidance)
+    return pmodel.eval_alignment_hit_to_miss_ratio2(Xpf, Pf, Lh, error_avoidance=error_avoidance)
 
-def eval_alignment_hit_to_miss_ratio(Xpf, Mc, Lh, conditioned=True):
-    return pmodel.eval_alignment_hit_to_miss_ratio(Xpf, Mc, Lh, conditioned=conditioned)  # ~ np.log(n_tp_hit * n_fp_missed)
+def eval_alignment_hit_to_miss_ratio(Xpf, Pf, Lh, conditioned=True):
+    return pmodel.eval_alignment_hit_to_miss_ratio(Xpf, Pf, Lh, conditioned=conditioned)  # ~ np.log(n_tp_hit * n_fp_missed)
 
-# def eval_alignment_true_positive(Xpf, Mc, Lh): 
-#     cells_tp = (Mc == 1) & (Lh == 1)  # but this is not necessarily good, because "true positive" is defined wrt estiamted labels (Lh)
-#     return np.sum( (Xpf == Mc) & cells_tp)
-def eval_alignment_positive(Xpf, Mc, Lh, verbose=False): 
+# def eval_alignment_true_positive(Xpf, Pf, Lh): 
+#     cells_tp = (Pf == 1) & (Lh == 1)  # but this is not necessarily good, because "true positive" is defined wrt estiamted labels (Lh)
+#     return np.sum( (Xpf == Pf) & cells_tp)
+def eval_alignment_positive(Xpf, Pf, Lh, verbose=False): 
     # Xpf: is a binary matrix
-    return pmodel.eval_alignment_positive(Xpf, Mc, Lh, verbose=verbose)  # P(positive|aligned)
+    return pmodel.eval_alignment_positive(Xpf, Pf, Lh, verbose=verbose)  # P(positive|aligned)
 
-def eval_alignment(Xpf, Mc, Lh=None, conditioned=True): 
+def eval_alignment(Xpf, Pf, Lh=None, conditioned=True): 
     # Xpf: is a binary matrix
-    return pmodel.eval_alignment(Xpf, Mc, Lh=Lh, conditioned=conditioned)
+    return pmodel.eval_alignment(Xpf, Pf, Lh=Lh, conditioned=conditioned)
 
 def estimate_pref_threshold(Th, T, L=[], p_threshold=[], ratio_small_class=0.1, 
         pos_label=1, step=0.01, min_score=0.0, max_score=1.0, message=''): 
     if len(L) == 0: 
         assert len(p_threshold) > 0, "(estimate_pref_threshold) need proba threshold to estimate labels ..."
         L = lh = estimateLabels(T, L=[], p_th=p_threshold, pos_label=pos_label, ratio_small_class=ratio_small_class)
-    correctness, _ = probability_filter(T, L, p_threshold)  # correctness matrix (Mc) entries: 1, if correct predictions (TP, TN); 0 o.w. 
+    correctness, _ = probability_filter(T, L, p_threshold)  # correctness matrix (Pf) entries: 1, if correct predictions (TP, TN); 0 o.w. 
 
     # calibrate Th (preference matrix) wrt the estimated correctness matrix (estimated via lh)
-    Thb, pref_threshold, rc = calibrate_preference(Th, Mc=correctness, step=step, 
+    Thb, pref_threshold, rc = calibrate_preference(Th, Pf=correctness, step=step, 
         min_score=min_score, max_score=max_score,
             message=message)
     return Thb, pref_threshold, rc
@@ -5500,22 +5543,22 @@ def calibrate_preference(Xpf, step=0.01, **kargs):
     X, L, p_threshold = kargs.get('X', None), kargs.get('L', []), kargs.get('p_threshold', [])
     tConservativeArgmax = kargs.get('conservative_argmax', False)
 
-    Mc = kargs.get('Mc', None)
+    Pf = kargs.get('Pf', None)
     Lh = kargs.get('Lh', None)
-    if Mc is None: # if correctness matrix is not given ... 
+    if Pf is None: # if correctness matrix is not given ... 
         if X is None or len(L) == 0 or len(p_threshold) == 0: 
             msg = "(calibrate_preference) Need (X, L, p_th) to compute prediction correctness."
             raise ValueError(msg)
-        Mc, Lh = probability_filter(X, L, p_th)
+        Pf, Lh = probability_filter(X, L, p_th)
     if Lh is None:
         assert X is not None and len(p_threshold) > 0 
         Lh = estimateLabelMatrix(X, p_th=p_threshold)
-    # ... correctness matrix Mc is given; optionally, Lh
+    # ... correctness matrix Pf is given; optionally, Lh
 
     # [test]
-    polarities = np.unique(Mc)
+    polarities = np.unique(Pf)
     assert min(polarities) == 0, "(calibrate_preference) polarities: {}".format(polarities)
-    if Mc is not None: assert len(polarities) == 2
+    if Pf is not None: assert len(polarities) == 2
     if Lh is not None: assert len(np.unique(Lh)) == 2
 
     X = Xpf.copy() # make a copy to avoid overwriting the input Xpf
@@ -5585,7 +5628,7 @@ def calibrate_preference(Xpf, step=0.01, **kargs):
         Xb = binarize_pref(X, p_th=th, cutoff=False, min_score=min_score, max_score=max_score)  # p_th is a preference score threshold
         
         # optimization objective ... (1) maximizing agreement
-        nc.append( policy_func(Xb, Mc, Lh) )  # prefered vs correct, how much are they aligned? 
+        nc.append( policy_func(Xb, Pf, Lh) )  # prefered vs correct, how much are they aligned? 
 
     # [test] 
     #  1. precision: plateau after a certain threshould (all 1s beyond a certain point)
@@ -5626,9 +5669,9 @@ def calibrate_preference(Xpf, step=0.01, **kargs):
     return Xb, pmax, score
 
 def estimate_support_ratio(X, L, p_th, percentile=50, gamma=1.0): 
-    Mc, Lh = probability_filter(X, L, p_th)  # Mc is a (0, 1)-matrix 
+    Pf, Lh = probability_filter(X, L, p_th)  # Pf is a (0, 1)-matrix 
     # ratios = np.sum(Lh == L[None, :], axis=0)/Lh.shape[1]
-    ratios = np.sum(Mc, axis=0)/Mc.shape[0]
+    ratios = np.sum(Pf, axis=0)/Pf.shape[0]
 
     # ratio = np.percentile(ratios, percentile)
     ratio = np.mean(ratios) * gamma
@@ -5859,7 +5902,8 @@ def polarity_modeling(R, Lr, p_th, T, **kargs):
     #    pos_label=1, neg_label=0, bag_count=10, fold_count=5, index=0
     return pmodel.polarity_modeling(R, Lr, p_th, T, **kargs)
 
-def make_cn(C, Po, **kargs):
+
+def mask_by_filter(C, Po, **kargs): 
     """
     Given polarity matrix (Po), mask the neutral and negative entries in the confidence matrix so that 
     they do not enter the optimization objective (i.e. latent factors will not be made to approximate 
@@ -5872,9 +5916,12 @@ def make_cn(C, Po, **kargs):
     # Optional parameters
     #    is_unweighted=False, weight_neutral=0.0, weight_negative=-1.0, 
     #    sparsify=True, verbose=1
-    return pmodel.make_cn(C, Po, **kargs)
-# [alias]
-mask_neutral_and_negative = make_cn
+    return pmodel.mask_by_filter(C, Po, **kargs)
+# [alias] for backward compatibility
+def make_cn(C, Po, **kargs):
+    return pmodel.mask_by_filter(C, Po, **kargs)
+def mask_neutral_and_negative(C, Po, **kargs): 
+    return pmodel.mask_by_filter(C, Po, **kargs)
 
 def make_cp(C, Po, **kargs):
     """
@@ -5948,10 +5995,10 @@ def test_polarity(T, labels, **kargs):
     #    Pref=None, p_th=[], lh=[], name='T', pos_label=1, neg_label=0, title=''
     return pmodel.test_polarity(T, labels, **kargs)
 
-def eval_polarity(Po, Mc, Lh, **kargs):     
+def eval_polarity(Po, Pf, Lh, **kargs):     
     # Optional parameters
     #     pos_po=1, neg_po=-1, verbose=False, name='X', title=''
-    return pmodel.eval_polarity(Po, Mc, Lh, **kargs)
+    return pmodel.eval_polarity(Po, Pf, Lh, **kargs)
 
 def estimate_polarity(R, Lr, p_th, T, **kargs):
     # Optional parameters

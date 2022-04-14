@@ -29,17 +29,19 @@ class Polarity(object):
 # Polarity and color matrices
 ######################################################################
 
-def is_hard_filter(P):
+def is_hard_filter(P, n_codes_ref=None):
 
     if sparse.issparse(P): P = P.A
-    encoding = np.unique(P)
+    n_codes = np.unique(P)
     
-    if len(encoding) > 2:
+    if n_codes_ref is None: n_codes_ref = len(set(Polarity.codes.values()))
+
+    if len(n_codes) > n_codes_ref:
         return False 
   
-    return encoding == {0, 1}
+    return True
 
-def infer_probability_filter(X, L, P, p_th, verbose=0): 
+def infer_probability_filter(X, L, P, p_th, to_polarity=False, verbose=0): 
     """
 
     Parameters
@@ -76,44 +78,51 @@ def infer_probability_filter(X, L, P, p_th, verbose=0):
     assert not is_hard_filter(Pr), "Input probabilty filter is a hard filter! Please provide a soft filter."
 
     # Infer proportion of reliable entries from the training set (i.e. R, rating matrix derived from the training set)
-    M, Lh = probability_filter(R, L, p_th)
-
-    # Global reliability threshold estiamted below may not be "reliable" :)
-    # n_reliable = (M == 1).sum()
-    # n_unreliable = (M == 0).sum()
-    # r_th = n_reliable/(M.size+0.0) # reliability threshold
+    Po, Lh = probability_filter(R, L, p_th) # Note that probability_filter() gives 0-1 encoding
+    
+    # `Po` takes on values {0, 1}
 
     # Infer a reliability threshold for each user/classifier using the training data
     # NOTE: 
     #   1. Reliability threshold may depend on the class label (can we really decouple reliability threshold from class label?)
     r_th = []
     for i in range(R.shape[0]):
-        # r_th_tp = Pr[i][(M[i] == 1) & (L == 1)].min() # reliability threshold for TPs
-        # r_th_tn = Pr[i][(M[i] == 1) & (L == 0)].min() # reliability threshold for TNs
+        # r_th_tp = Pr[i][(Po[i] == 1) & (L == 1)].min() # reliability threshold for TPs
+        # r_th_tn = Pr[i][(Po[i] == 1) & (L == 0)].min() # reliability threshold for TNs
         
-        r_th_i = Pr[i][ M[i] == 1 ].min() # minimum reliability degree in order to be consider reliable
-        r_th_i_max = Pr[i][ M[i] == 0 ].max()
+        idx_reliable = (Po[i] == 1)
+        if idx_reliable.sum() > 0: 
+            r_th_i = Pr[i][ idx_reliable ].min() # minimum reliability degree in order to be consider reliable
+        else: 
+            idx_unreliable = (Po[i] == 0)
+            if idx_unreliable.sum() > 0:
+                r_th_i = Pr[i][ idx_unreliable ].max() # could this be a lower bound on the reliabilty threshold? Not necessarily
+            else: 
+                raise ValueError(f"Found ill-formed polarity at i={i}:\n{Po[i]}\n")
 
         r_th.append(r_th_i)
     r_th = np.array(r_th)
 
     # [test] 
-    # For training data, we already have the reliability matrix (M) but let's double check if the estimate is consistent with 
-    # the one inferred from the true label (M)
-    M_prime = (Pr >= r_th.reshape((-1, 1))).astype(int) # note: .reshape turns r_th into a column vector 
-    if not np.array_equal(M, M_prime): 
-        n_diff = (M != M_prime).sum()
+    # For training data, we already have the reliability matrix (which is the role that probability filter plays here) 
+    # but let's double check if the estimate is consistent with the one inferred from the true label (Po)
+    Po_prime = (Pr >= r_th.reshape((-1, 1))).astype(int) # note: .reshape turns r_th into a column vector 
+    if not np.array_equal(Po, Po_prime): 
+        n_diff = (Po != Po_prime).sum()
         print(f"Conflict in reliability matrix estimate: { n_diff } entries are different")
-        print(f"Error rate: {n_diff/(M.size+0.0)}")
+        print(f"Error rate: {n_diff/(Po.size+0.0)}")
 
     if Pt is not None: 
-        Mt = (Pt >= r_th.reshape((-1, 1))).astype(int) # note that `r_th` is the thresholds inferred only from training data
-        M = np.hstack((M, Mt))
+        Pt = (Pt >= r_th.reshape((-1, 1))).astype(int) # note that `r_th` is the thresholds inferred only from training data
+        Po = np.hstack((Po, Pt))
+
+    if to_polarity: 
+        Po = preference_to_polarity(Po, verify=verbose > 1)
         
-    return M, r_th
+    return Po, r_th
 
 # source: utils_cf
-def probability_filter(X, L, p_th, *, target_label=None): 
+def probability_filter(X, L, p_th, *, to_polarity=False, target_label=None, verbose=0): 
     """
     Compute a binary matrix in which 1 represents a correct prediction (i.e. TP or TN), 
     and 0 represents a false prediction (i.e. FP or FN). Predicted labels (Lh) are determined by the given probability threshold (p_th). 
@@ -149,6 +158,9 @@ def probability_filter(X, L, p_th, *, target_label=None):
         #      Lh == L[None, :] compares row-wise between Lh[i] and L due to the broadcasting rule
     else: 
         M = (Lh == L[None, :]).astype(int)
+
+    if to_polarity: 
+        M = preference_to_polarity(M, verify=verbose > 1)
 
     return (M, Lh)
 def preference_matrix(X, L, p_th, **kargs):
@@ -336,6 +348,7 @@ def to_preference(Po, neutral=0.0):
     # assert neutral < 1 and neutral >= 0.0
 
     P = np.ones(Po.shape)  
+
     if sparse.issparse(Po): 
         Pa = Po.toarray()
         P[Pa==0] = neutral      # masking neutral
@@ -347,16 +360,21 @@ def to_preference(Po, neutral=0.0):
         P[Po > 0] = 1.0
         P[Po < 0] = 0.0  # masking negative
     return P # {0, 1}
+
 def preference_to_polarity(M):
     return to_polarity(M)
 def to_polarity(M, verify=False): 
+    """ 
+    Convert 0-1 encoding to {-1, 1} encoding
+    """
     # from preference matrix to polarity matrix
 
     # if verify: 
     #     vmin, vmax = np.min(M), np.max(M)
     P = np.ones(M.shape)  
-    if sparse.issparse(M):      
-        P[M.toarray() == 0] = -1    # incorrect predictions (FP, FN) => negative polarity 
+    if sparse.issparse(M):  
+        M = M.A    
+        P[M == 0] = -1    # incorrect predictions (FP, FN) => negative polarity 
         P = sparse.csr_matrix(P)
     else: 
         P[M == 0] = -1 
@@ -476,7 +494,7 @@ def from_color_to_reduced_color(M, codes={}, verify=True):
 # Training data creation
 #########################################################################
 
-def make_seq2seq_training_data(R, Po=None, L=None, include_label=False, **kargs): 
+def make_seq2seq_training_data(R, Po=None, L=None, include_label=True, **kargs): 
     """
 
     Parameters
@@ -496,7 +514,7 @@ def make_seq2seq_training_data(R, Po=None, L=None, include_label=False, **kargs)
     X: 
     Y: 
     """
-    import polarity_models as pmodel
+    import utils_cf as uc
 
     verbose = kargs.get('verbose', 0)
 
@@ -522,8 +540,26 @@ def make_seq2seq_training_data(R, Po=None, L=None, include_label=False, **kargs)
 
             Y.append(Po[:, j].reshape(-1, 1) ) # 
     else: 
+        assert len(p_threshold) > 0 and L is not None
+
+        # Compute a label place holder for the training instances (LSTM requires that the input and output sequence have the same length)
+        # Why? Indeed we know `L_train` but we may not want to rely on it too much. After the model is trained at the prediction/test time, 
+        # we will no longer have the labeling information (i.e. when calling model.predict(X_test)); 
+        # this means that we cannot make the test instances with the label in it (because ultimately the class label for T is what 
+        # we are aiming to predict)
+        # 
+        # What we could do instead is to infer the labeling using the ratings and probability thresholds, which can also be equally done 
+        # at the prediction/test time
+        L_train_est = uc.estimateLabels(R, p_th=p_threshold) # this by default uses majority vote
+
         for j in range(R.shape[1]):
-            X.append( np.vstack( (R[:, j].reshape(-1, 1), L[j]) )) # Add the class label(s) to the end of the rating sequence
+            X.append( np.vstack( (R[:, j].reshape(-1, 1), 0) )) # Guess the label or zero-pad at the end of the rating sequence ... 
+            # ... LSTM requires that the input and output sequence have the same length. 
+            # ... The label sequence Y has an additional class label at the end as part of the sequence
+            # ... while the input sequence does not (therefore, we needed to either zero pad the input sequence or use 
+            # ... a heuristic for the class label so that X[i] and Y[i] share the same length. 
+            # Why don't we add class label to X? Because at the prediction time, we will not know the class label (which is to be predicted) 
+
             Y.append( np.vstack( (Po[:, j].reshape(-1, 1), L[j]) )) # Add the class label and assume positive class as having positive polarity
 
     X = np.array(X)
@@ -537,7 +573,8 @@ def make_seq2seq_training_data(R, Po=None, L=None, include_label=False, **kargs)
 # Models
 ##########################################################################
 
-def make_cn(C, Po, is_unweighted=False, weight_neutral=0.0, weight_negative=-1.0, sparsify=True, verbose=1):
+
+def mask_by_filter(C, Po, is_unweighted=False, weight_neutral=0.0, weight_negative=0.0, sparsify=True, verbose=1):
     """
     Given polarity matrix (Po), mask the neutral and negative entries in the confidence matrix so that 
     they do not enter the optimization objective (i.e. latent factors will not be made to approximate 
@@ -548,74 +585,59 @@ def make_cn(C, Po, is_unweighted=False, weight_neutral=0.0, weight_negative=-1.0
     1. this routine is effectively the same as make_cp() now ... 02.07.22
     """
     # import scipy.sparse as sparse
-    if not is_unweighted: 
+
+    if sparse.issparse(Po): Po = Po.A
+
+    C_is_sparse = False
+    if is_unweighted: 
         if verbose: print("(make_cn) Using UNWEIGHTED confidence matrix (with all C[i][j] having equal weights) to approximate ratings ...")
         Cn = np.ones(C.shape) 
-
-        if sparse.issparse(Po): 
-            mask = Po.toarray()
-            Cn[mask == 0] = weight_neutral    # marking neutral (if 0, won't enter optimization objective)
-            Cn[mask < 0] = weight_negative    # marking negative
-            # Cn = sparse.csr_matrix(Cn)
-        else: 
-            Cn[Po == 0] = weight_neutral    # marking neutral
-            Cn[Po < 0]  = weight_negative   # marking negative
     else: 
-        if verbose: print("(make_cn) Using WEIGHTED confidence matrix (Cw) to approximate ratings ...")
-        # otherwise, we retain the weight but masking the neutral and negative examples so that they do not enter the cost function when approximating "ratings"
-        
-        # ... If Cx is sparse, then Cn+Cx is no longer sparse but of matrix type (if without .toarray())
+        if verbose: print("(make_cn) Using WEIGHTED confidence matrix to approximate ratings ...")
         if sparse.issparse(C):
             Cn = C.toarray()  # Cx.toarray()  # copying
+            C_is_sparse = True
         else: 
             Cn = np.copy(C)
 
-        mask_neutral = Po.A == 0 if sparse.issparse(Po) else Po == 0
-        Cn[mask_neutral] = Cn[mask_neutral] * weight_neutral  # masking neutral  
+    # Given a rating matrix (R), entries with zero confidence score won't enter optimization objective (i.e. these entries 
+    # will not contribute to the derviation of latent factors)
+    Cn[Po == 0] = weight_neutral    
+    Cn[Po < 0] = weight_negative    
         
-        mask_negative = Po.A < 0.0 if sparse.issparse(Po) else Po < 0
-        Cn[mask_negative] = Cn[mask_negative] * weight_negative  # masking negative
-        
-        # NOTE: A simpler statement would be the following but this is a re-assignment, which is not the same as "re-weighting"
-        #       because we'd have no control over the weight
-        # Cn = Cn * (Po.A > 0).astype('float32') 
+    # NOTE: A simpler statement would be the following but this is a re-assignment operation, which is not the same as "re-weighting"
+    #       because then we'll have no control over the weight
+    # Cn = Cn * (Po > 0).astype('float32') 
 
-    # ... Cn is in "dense" format at this point
+    # At this point, Cn is in "dense" format 
 
-    # dtype(Cn) must be consistent with dtype(Po)
-    if sparse.issparse(Po) or sparsify: # then Cn must also be sparse to be consistent
+    if C_is_sparse: # then Cn must also be sparse to be consistent
         Cn = sparse.csr_matrix(Cn)
     return Cn
 
-def make_cp(C, Po, is_unweighted=False, sparsify=True):
+# [alias] For backward compatibility
+make_cn = mask_by_filter 
+
+def make_cp(C, Po, is_unweighted=False, weight=0.0, sparsify=True):
     """
     Similar to make_cn() but mask only the nuetral (i.e. entries with so much uncertainty 
     that we do not know if they are TP, TN or FP, FN)
     """
-    # import scipy.sparse as sparse
-    if is_unweighted:  
-        print("(make_cp) Using UNWEIGHTED confidence matrix (equal weights for C[i][j]) to approximate ratings ...")
+    if sparse.issparse(Po): Po = Po.A
+
+    C_is_sparse = False
+    if is_unweighted: 
+        if verbose: print("(make_cp) Using UNWEIGHTED confidence matrix (with all C[i][j] having equal weights) to approximate ratings ...")
         Cp = np.ones(C.shape) 
-        
-        if sparse.issparse(Po): 
-            mask = Po.toarray()
-            Cp[mask==0] = 0.0
-            # Cp = sparse.csr_matrix(Cp)
-        else: 
-            Cp[Po==0] = 0.0  # masking neutral
     else: 
-        print("(make_cp) Using WEIGHTED (Cw) confidence matrix to approximate ratings ...")
-        # otherwise, we retain the weight but masking the neutral and negative examples so that they do not enter the cost function when approximating "ratings"
-        
-        # ... If Cx is sparse, then Cp+Cx is no longer sparse but of matrix type (if without .toarray())
+        if verbose: print("(make_cp) Using WEIGHTED confidence matrix to approximate ratings ...")
         if sparse.issparse(C):
             Cp = C.toarray()  # Cx.toarray()  # copying
+            C_is_sparse = True
         else: 
             Cp = np.copy(C)
 
-        mask_neutral = Po.toarray()==0 if sparse.issparse(Po) else Po == 0
-        Cp[mask_neutral] = 0.0 
-    # ... Cp is dense at this point
+    Cp[Po == 0] = weight
 
     # dtype(Cn) must be consistent with dtype(Po)
     if sparse.issparse(Po) or sparsify: # then Cn must also be sparse to be consistent

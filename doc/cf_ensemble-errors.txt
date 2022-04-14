@@ -9,6 +9,45 @@
       > but can we avoid havin to estimate T's labels? 
   
 
+# seq2seq training data: zero-padding vs using heuristic for the labeling position
+
++ zero-padding
+
+Conflict in reliability matrix estimate: 14274 entries are different
+Error rate: 0.76128
+[info] n_reliable: 10658, n_unreliable: 14342
+       r_reliable: 0.42632, r_unreliable: 0.57368
+[info] Reliability threshold: [0.098 0.084 0.077 0.092 0.064]
+
+
++ majority vote 
+
+Conflict in reliability matrix estimate: 12821 entries are different
+Error rate: 0.6837866666666667
+[info] n_reliable: 12074, n_unreliable: 12926
+       r_reliable: 0.48296, r_unreliable: 0.51704
+[info] Reliability threshold: [0.094 0.089 0.069 0.069 0.062]
+
+================================================================================
+Guesstimated labeling (on T) via seq2seq-based polarity model model
+================================================================================
+> Labeling accuracy: 0.1088
+> Reliable-to-correct ratio: 0.44912
+> Precision: 0.4491199281408115, Recall: 0.9999996437479003
+> Predcitio(TP): 0.06303998991360162, Recall(TP): 0.9999974619353759 => f1(TP): 0.11860321535122957
+> Error rate: 8.814077179495075e-05
+================================================================================
+Guesstimated labeling (on T) via MAJORITY VOTE
+================================================================================
+> Labeling accuracy: 0.3568
+> Reliable-to-correct ratio: 0.3568
+> Precision: 0.3478805247352584, Recall: 0.49412166222954673
+> Predcition(TP): 0.0737396353800764, Recall(TP): 0.7461909995152297 => f1(TP): 0.13421587116372008
+> Error rate: 0.00016356133957569994
+
+
+
+
 # Conflict in reliability matrix is too HIGH
 
 

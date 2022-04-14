@@ -303,7 +303,7 @@ def train_test(model, X_train, y_train, X_test, y_test, epochs=500, verbose=0):
 
     # report training
     # list all data in history
-    #print(history.history.keys())
+    # print(history.history.keys())
     # evaluate the model
     _, train_acc = model.evaluate(X_train, y_train, verbose=0)
     _, test_acc = model.evaluate(X_test, y_test, verbose=0)

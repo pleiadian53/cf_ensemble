@@ -1954,8 +1954,8 @@ def reconstruct_by_preference(C, X, prefs, factors=[], labels=[],
             assert Xp.shape == X.shape
 
             # >>> binarize
-            Mc, Lh_X = uc.probability_filter(X, labels, p_threshold, estimate_labels=False)  # note: pass X (not Xp), Mc: (approx) correctness matrix
-            Xp, pref_threshold, _ = uc.calibrate_preference(Xp, Mc=Mc, step=0.01, 
+            Pf, Lh_X = uc.probability_filter(X, labels, p_threshold, estimate_labels=False)  # note: pass X (not Xp), Pf: (approx) correctness matrix
+            Xp, pref_threshold, _ = uc.calibrate_preference(Xp, Pf=Pf, step=0.01, 
                 policy=policy_calibration,  # options: agreement, {f-pref, f-align}, hit-to-miss, ... 
                 
                 Lh=Lh_X)  
@@ -1964,7 +1964,7 @@ def reconstruct_by_preference(C, X, prefs, factors=[], labels=[],
 
             # [test]
             # if true (test) labels were given, use it; o.w. construct an approximate correctness matrix
-            correctness = Mc_ref if len(test_labels) > 0 else Mc # Mc_ref: correctness matrix VS Mc: (approx) correctness matrix 
+            correctness = Mc_ref if len(test_labels) > 0 else Pf # Mc_ref: correctness matrix VS Pf: (approx) correctness matrix 
             Lh = Lh_ref if tHasTestLabels else Lh_X
 
             print('(reconstruct_by_preference) Quality of the seed (X={})| pref_threshold: {} | test data? {}, policy_calibration: {}  ... Cycle: {}'.format(
@@ -1983,9 +1983,9 @@ def reconstruct_by_preference(C, X, prefs, factors=[], labels=[],
 
             if verify: 
                 assert len(p_threshold) > 0 and len(labels) > 0, "Missing either proba threshold or labels:\n... p_threshold: {}, labels: {}\n".format(p_threshold, labels)
-                Mc, Lh_X = uc.probability_filter(X, labels, p_threshold)  # note: pass X (not Xp)
+                Pf, Lh_X = uc.probability_filter(X, labels, p_threshold)  # note: pass X (not Xp)
 
-                correctness = Mc_ref if tHasTestLabels else Mc  # Mc: (approx) correctness matrix VS Mc_ref: correctness matrix
+                correctness = Mc_ref if tHasTestLabels else Pf  # Pf: (approx) correctness matrix VS Mc_ref: correctness matrix
                 Lh = Lh_ref if len(test_labels) > 0 else Lh_X
 
                 print('(reconstruct_by_preference) Quality of the seed given pref_threshold | th(X): {} | test data? {}, policy_calibration: {}  ... Cycle: {}'.format(is_test_set, 
@@ -2160,7 +2160,7 @@ def reconstruct_by_preference(C, X, prefs, factors=[], labels=[],
 
                 # how does it compare to majority votes? 
                 lh = estimateLabels(T, p_th=p_threshold, pos_label=1) 
-                Mct_max, Lht_max = probability_filter(T, lh, p_threshold)  # Mc is a (0, 1)-matrix
+                Mct_max, Lht_max = probability_filter(T, lh, p_threshold)  # Pf is a (0, 1)-matrix
                 ret = uc.eval_polarity(uc.preference_to_polarity(Mct_max), CMt, Lht, verbose=True, name='Tmax', neg_po=-1, title='(by_preference) -- {}: majority votes --'.format(name))
 
                 # make predictions via the preference matrix
@@ -2656,13 +2656,13 @@ def wmf_ensemble_iter(data, params, hyperparams={}, indices=[], vars=['wmfCV', '
             replace_subset=params['replace_subset'], params=params, null_marker=null_marker, binarize=False, name='R')
     # ... Rh is not yet binarized 
     if tPreferenceCalibration: 
-        Mc, Lh_R = uc.probability_filter(R, L_train, p_threshold)  # CM entries: 1, if correct predictions (TP, TN); 0 o.w. 
-        Rh, pref_threshold, score = uc.calibrate_preference(Rh, Mc=Mc, Lh=Lh_R, step=0.01, 
+        Pf, Lh_R = uc.probability_filter(R, L_train, p_threshold)  # CM entries: 1, if correct predictions (TP, TN); 0 o.w. 
+        Rh, pref_threshold, score = uc.calibrate_preference(Rh, Pf=Pf, Lh=Lh_R, step=0.01, 
             message='training split (R)', policy=params['policy_calibration'])  # Lh is only used in 'precision'
         # ... Rh is binarized, score depends on the policy
         
         print('(wmf_ensemble_iter) Quality of the seed on R ... Cycle: {}'.format( (outer_fold, fold)) )
-        ret = uc.ratio_of_alignment2(Rh, Mc, Lh_R, verbose=True)  
+        ret = uc.ratio_of_alignment2(Rh, Pf, Lh_R, verbose=True)  
         
     # ... Rh is binarized 
     
@@ -2819,11 +2819,11 @@ def wmf_ensemble_iter(data, params, hyperparams={}, indices=[], vars=['wmfCV', '
         # ... now got the preference threshold
 
         # use L_test to get correctness matrix
-        Mc, Lh_T = uc.probability_filter(T, L_test, p_threshold)  # Lh(T, p_threshold)
+        Pf, Lh_T = uc.probability_filter(T, L_test, p_threshold)  # Lh(T, p_threshold)
 
         # degree of alignment between preference matrix Th (via esimated labels Lh) and corrrectness CMt(computed from true labels)
         print("... (1) Quality of the seed (via estimated labels): cycle {} | th(R): {} ~? th(T): {}".format( (outer_fold, fold), pref_threshold, pref_threshold_test))
-        ret = uc.ratio_of_alignment2(Thb, Mc, Lh_T, verbose=True) # set binarize to False if Thb is already binarized
+        ret = uc.ratio_of_alignment2(Thb, Pf, Lh_T, verbose=True) # set binarize to False if Thb is already binarized
 
         ########################################
         # ... how does it compare to using true labels?
@@ -2832,14 +2832,14 @@ def wmf_ensemble_iter(data, params, hyperparams={}, indices=[], vars=['wmfCV', '
         Thb2, pth_test, rc_test = uc.estimate_pref_threshold(Th, T, L=L_test, p_threshold=p_threshold, message='Tb using true test labels')
 
         print('... (2) Quality of the seed (via true labels): cycle {} | th(R): {} ~? th(T): {}'.format( (outer_fold, fold), pref_threshold, pth_test))
-        ret = uc.ratio_of_alignment2(Thb2, Mc, Lh_T, verbose=True) # set binarize to False if Thb is already binarized
+        ret = uc.ratio_of_alignment2(Thb2, Pf, Lh_T, verbose=True) # set binarize to False if Thb is already binarized
 
         div('(wmf_ensemble_iter) 3. How about just using the threshold from (R)?')
         pth_test = pref_threshold
         Thb3 = uc.binarize_pref(Th, p_th=pref_threshold)
 
         print("... (3) Quality of the seed (via R): cycle {} | th(R): {} == th(T): {}".format( (outer_fold, fold), pref_threshold, pth_test))
-        ret = uc.ratio_of_alignment2(Thb3, Mc, Lh_T, verbose=True) # set binarize to False if Thb is already binarized
+        ret = uc.ratio_of_alignment2(Thb3, Pf, Lh_T, verbose=True) # set binarize to False if Thb is already binarized
 
         # use (1) as our preference matrix
         Th = Thb
@@ -4920,7 +4920,7 @@ def wmf_ensemble_iter2(data, params, hyperparams={}, indices=[], vars=['wmfCV', 
     X = np.hstack((R, T))
     lh_X = L = np.hstack((L_train, Lh)) 
 
-    McR, _ = uc.probability_filter(R, L_train, p_threshold)  # Mc: correct, Mh: estimated
+    McR, _ = uc.probability_filter(R, L_train, p_threshold)  # Pf: correct, Mh: estimated
     ratio_users = np.sum(McR, axis=0)/McR.shape[0]
     ratio_items = np.sum(McR, axis=1)/McR.shape[1]   # overall accuracy of each user/classifier
     n_ones, n_zeros = np.sum(McR==1), np.sum(McR==0)
@@ -5076,7 +5076,7 @@ def wmf_ensemble_iter2(data, params, hyperparams={}, indices=[], vars=['wmfCV', 
             
             # ... MhX is an estimated corrected matrix (because the test-split labels are estimated)
             # ... Xh: continous preference matrix
-            Xh, pref_threshold, score = uc.calibrate_preference(Xh, Mc=MhX, Lh=Lhx, step=0.01, 
+            Xh, pref_threshold, score = uc.calibrate_preference(Xh, Pf=MhX, Lh=Lhx, step=0.01, 
                     policy=policy_calibration, message='train-test split (X: R+T)') 
             # ... Xh: binary preference matrix
 
@@ -5089,18 +5089,18 @@ def wmf_ensemble_iter2(data, params, hyperparams={}, indices=[], vars=['wmfCV', 
         # -- B. calibrate separately 
         lr, lht = L[:n_train], L[n_train:]  # lht is estimated via heuristics (e.g. majority vote)
         
-        McR, Lr = uc.probability_filter(R, lr, p_threshold)  # Mc: correct, Mh: estimated
-        # Rh, pref_threshold, score = uc.calibrate_preference(Rh, Mc=McR, Lh=Lr, step=0.01, 
+        McR, Lr = uc.probability_filter(R, lr, p_threshold)  # Pf: correct, Mh: estimated
+        # Rh, pref_threshold, score = uc.calibrate_preference(Rh, Pf=McR, Lh=Lr, step=0.01, 
         #     policy=policy_calibration, message='train split (R)')
 
-        MhT, Lht = uc.probability_filter(T, lht, p_threshold)  # Mh: estimated Mc
-        # Th, pref_threshold_test, score = uc.calibrate_preference(Th, Mc=MhT, Lh=Lht, step=0.01, 
+        MhT, Lht = uc.probability_filter(T, lht, p_threshold)  # Mh: estimated Pf
+        # Th, pref_threshold_test, score = uc.calibrate_preference(Th, Pf=MhT, Lh=Lht, step=0.01, 
         #     policy=policy_calibration, message='test split (T)')
         # ... now (Rh, Th) are binary matrices
 
         # >>> the evaluation should be wrt true labels 
         # ... use L_test to get correctness matrix
-        # Mc, _ = uc.probability_filter(X, np.hstack((L_train, L_test)), p_threshold)  # Lh(T, p_threshold)
+        # Pf, _ = uc.probability_filter(X, np.hstack((L_train, L_test)), p_threshold)  # Lh(T, p_threshold)
         McT, Lt = uc.probability_filter(T, L_test, p_threshold)  # Lh(T, p_threshold)
 
         # how aligned is MhT with McT? 
@@ -5112,7 +5112,7 @@ def wmf_ensemble_iter2(data, params, hyperparams={}, indices=[], vars=['wmfCV', 
 
         # print('(wmf_ensemble_iter2) Quality of seed on (Xh) | th(Xh): {} => policy_calibration: {}    ... cycle: {}'.format( pref_threshold, policy_calibration, (outer_fold, fold) ))
         # p_tp_preferred, p_fp_preferred, p_tn_preferred, p_fn_preferred, p_agreed, p_correct_agreed = \
-        #     uc.ratio_of_alignment2(Xh, Mc, Lh_X, verbose=True)  
+        #     uc.ratio_of_alignment2(Xh, Pf, Lh_X, verbose=True)  
 
         print('(wmf_ensemble_iter2) Quality of seed on (Rh) | th(Rh): {} ~? th(Xh): {} | policy_calibration: {}    ... cycle: {}'.format( pref_threshold, pref_threshold_ref, 
             policy_calibration, (outer_fold, fold) ))
@@ -5162,13 +5162,13 @@ def wmf_ensemble_iter2(data, params, hyperparams={}, indices=[], vars=['wmfCV', 
     #     # [test]
     #     ##############################################
     #     # use L_test to get correctness matrix
-    #     Mc, Lh_T = uc.probability_filter(T, L_test, p_threshold)  # Lh(T, p_threshold)
+    #     Pf, Lh_T = uc.probability_filter(T, L_test, p_threshold)  # Lh(T, p_threshold)
     #     # ... only used for evaluation
         
-    #     # how does preference matrix Th match with true correctness matrhx Mc and true labels Lh_T? Lh_T is needed because we want to only focus on a target label (e.g. 1 or positive)
+    #     # how does preference matrix Th match with true correctness matrhx Pf and true labels Lh_T? Lh_T is needed because we want to only focus on a target label (e.g. 1 or positive)
 
     #     print('(wmf_ensemble_iter2) Quality of seed on (Th) | th(R+T): {} | policy_calibration: {}    ... cycle: {}'.format(pref_threshold, policy_calibration, (outer_fold, fold) ))
-    #     ret = uc.ratio_of_alignment2(Th, Mc, Lh_T, binarize=False, verbose=True)  # target, overall, correct only 
+    #     ret = uc.ratio_of_alignment2(Th, Pf, Lh_T, binarize=False, verbose=True)  # target, overall, correct only 
     #     # ... Th had been binarized via calibrate_preference(Xh)
 
     # X: (R, T, L_train, L_test, U)
@@ -5279,14 +5279,14 @@ def wmf_ensemble_iter2(data, params, hyperparams={}, indices=[], vars=['wmfCV', 
                 if file_type.startswith('post') and isPreferenceScore and tPreferenceCalibration: 
                     if aggr == 'mean': 
                         # ideal cases
-                        Mc, Lh_T = uc.probability_filter(T, L_test, p_threshold)  # Lh(T, p_threshold)
-                        pv_perfect = uc.predict_by_preference(T, Mc, W=None, name='Mc', aggregate_func=aggr, fallback_on_low_weight=False) 
+                        Pf, Lh_T = uc.probability_filter(T, L_test, p_threshold)  # Lh(T, p_threshold)
+                        pv_perfect = uc.predict_by_preference(T, Pf, W=None, name='Pf', aggregate_func=aggr, fallback_on_low_weight=False) 
                         comparisons[file_type]['perfect_{}'.format(aggr)] = common.fmax_score(y_label, pv_perfect, beta = 1.0, pos_label = 1)
 
                         # Cwt may not have been set
                         W = Cn[:,n_train:]
                         # if scipy.sparse.issparse(W): W = W.toarray()
-                        pv_perfect_weighted = uc.predict_by_preference(T, Mc, W=W, name='Mc', aggregate_func=aggr, 
+                        pv_perfect_weighted = uc.predict_by_preference(T, Pf, W=W, name='Pf', aggregate_func=aggr, 
                             fallback_on_low_weight=False) 
                         comparisons[file_type]['perfect_weighed_{}'.format(aggr)] = common.fmax_score(y_label, pv_perfect_weighted, beta = 1.0, pos_label = 1)
             
@@ -6949,7 +6949,7 @@ def test_wmf_probs_suite(**kargs):
 
         # kargs['policy_opt_T'] = 'foldin' # {'foldin', 'seed', 'transfer', 'transfer+seed'} 
         kargs['supervised'] = True
-        kargs['ratio_users'] = 0.5  # two-sided; used in estimating Mc for T; more conservative in the test split
+        kargs['ratio_users'] = 0.5  # two-sided; used in estimating Pf for T; more conservative in the test split
 
         div('[{0}] Preference scores used as meta data for (R, T)-entry selection >> {action}'.format(setting, 
             # action=actions['replace_subset'] if not kargs['predict_probs'] else actions['reconstruct']), 
@@ -6984,7 +6984,7 @@ def test_wmf_probs_suite(**kargs):
 
         # kargs['policy_opt_T'] = 'foldin' # {'foldin', 'seed', 'transfer', 'transfer+seed'} 
         kargs['supervised'] = True
-        kargs['ratio_users'] = 0.5  # two-sided; used in estimating Mc for T; more conservative in the test split
+        kargs['ratio_users'] = 0.5  # two-sided; used in estimating Pf for T; more conservative in the test split
 
         div('[{}] Preference scores used as meta data for (R, T)-entry selection | balance_class_resampling: {}, weighted_output: {} '.format(setting, 
                 kargs['balance_class_resampling'], kargs['weighted_output']), symbol='=', border=2)
@@ -7009,7 +7009,7 @@ def test_wmf_probs_suite(**kargs):
 
         # kargs['policy_opt_T'] = 'foldin' # {'foldin', 'seed', 'transfer', 'transfer+seed'} 
         kargs['supervised'] = True
-        kargs['ratio_users'] = -1  # two-sided; used in estimating Mc for T; more conservative in the test split
+        kargs['ratio_users'] = -1  # two-sided; used in estimating Pf for T; more conservative in the test split
 
         div('[{0}] Preference scores used as meta data for (R, T)-entry selection >> {action}'.format(setting, 
             action='weighted averaging'), symbol='=', border=2)
@@ -7040,7 +7040,7 @@ def test_wmf_probs_suite(**kargs):
 
         # kargs['policy_opt_T'] = 'foldin' # {'foldin', 'seed', 'transfer', 'transfer+seed'} 
         kargs['supervised'] = True
-        kargs['ratio_users'] = 0.5  # two-sided; used in estimating Mc for T; more conservative in the test split
+        kargs['ratio_users'] = 0.5  # two-sided; used in estimating Pf for T; more conservative in the test split
 
         div('[{0}] Preference scores used as meta data for (R, T)-entry selection >> {action}'.format(setting, 
             action='weighted averaging'), symbol='=', border=2)
@@ -7077,7 +7077,7 @@ def test_wmf_probs_suite(**kargs):
 
         # kargs['policy_opt_T'] = 'foldin' # {'foldin', 'seed', 'transfer', 'transfer+seed'} 
         kargs['supervised'] = True
-        kargs['ratio_users'] = 0.5  # two-sided; used in estimating Mc for T; more conservative in the test split
+        kargs['ratio_users'] = 0.5  # two-sided; used in estimating Pf for T; more conservative in the test split
     elif setting in (10, 'filter-by-polarity-classifier'): 
         kargs['training_mode'] = 'pref_cascade'
         kargs['policy'] = 'item' # 'user'
@@ -7112,7 +7112,7 @@ def test_wmf_probs_suite(**kargs):
 
         # kargs['policy_opt_T'] = 'foldin' # {'foldin', 'seed', 'transfer', 'transfer+seed'} 
         kargs['supervised'] = True
-        kargs['ratio_users'] = 0.5  # two-sided; used in estimating Mc for T; more conservative in the test split
+        kargs['ratio_users'] = 0.5  # two-sided; used in estimating Pf for T; more conservative in the test split
 
         div('[{}] Preference scores used as meta data for (R, T)-entry selection | balance_class_resampling: {}, weighted_output: {} '.format(setting, 
                 kargs['balance_class_resampling'], kargs['weighted_output']), symbol='=', border=2)

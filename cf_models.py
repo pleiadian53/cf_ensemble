@@ -1094,7 +1094,7 @@ def training_pipeline(input_model, input_data, **kargs):
 
     return model
 
-def training_with_reliability(input_model, input_data, **kargs):
+def training_with_predicted_filter(input_model, input_data, **kargs):
     """
     Load and transform input training data (from rating matrix format to user-item-pair format for CFNet), 
     followed by iteratively training the model (i.e. training loop). 
@@ -1244,7 +1244,7 @@ def training_with_reliability(input_model, input_data, **kargs):
 
     return model
 # [alias]
-training_pipeline2 = training_with_reliability
+training_pipeline2 = training_with_predicted_filter
 
 # Demo 
 #######################################################
