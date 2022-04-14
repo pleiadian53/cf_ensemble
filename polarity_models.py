@@ -41,7 +41,7 @@ def is_hard_filter(P, n_codes_ref=None):
   
     return True
 
-def infer_probability_filter(X, L, P, p_th, to_polarity=False, verbose=0): 
+def infer_probability_filter(X, L, P, p_th, to_polarity=False, min_r_th=1e-3, verbose=0): 
     """
 
     Parameters
@@ -86,19 +86,25 @@ def infer_probability_filter(X, L, P, p_th, to_polarity=False, verbose=0):
     # NOTE: 
     #   1. Reliability threshold may depend on the class label (can we really decouple reliability threshold from class label?)
     r_th = []
+    r_th_prior = (Po == 1).sum()/(Po.size+0.0)
     for i in range(R.shape[0]):
         # r_th_tp = Pr[i][(Po[i] == 1) & (L == 1)].min() # reliability threshold for TPs
         # r_th_tn = Pr[i][(Po[i] == 1) & (L == 0)].min() # reliability threshold for TNs
         
         idx_reliable = (Po[i] == 1)
         if idx_reliable.sum() > 0: 
-            r_th_i = Pr[i][ idx_reliable ].min() # minimum reliability degree in order to be consider reliable
+            # r_th_i = Pr[i][ idx_reliable ].min() # minimum reliability degree in order to be consider reliable
+            # ... min doesn't seem to be a reliable threshold
+
+            r_th_i = idx_reliable.sum()/(n_train+0.0) # use prior as the threshold
         else: 
-            idx_unreliable = (Po[i] == 0)
-            if idx_unreliable.sum() > 0:
-                r_th_i = Pr[i][ idx_unreliable ].max() # could this be a lower bound on the reliabilty threshold? Not necessarily
-            else: 
-                raise ValueError(f"Found ill-formed polarity at i={i}:\n{Po[i]}\n")
+            r_th_i = r_th_prior # global prior
+            
+            # idx_unreliable = (Po[i] == 0)
+            # if idx_unreliable.sum() > 0:
+            #     r_th_i = Pr[i][ idx_unreliable ].max() # could this be a lower bound on the reliabilty threshold? Not necessarily
+            # else: 
+            #     raise ValueError(f"Found ill-formed polarity at i={i}:\n{Po[i]}\n")
 
         r_th.append(r_th_i)
     r_th = np.array(r_th)
