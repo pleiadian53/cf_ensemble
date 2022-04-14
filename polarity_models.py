@@ -542,14 +542,17 @@ def make_seq2seq_training_data(R, Po=None, L=None, include_label=True, **kargs):
     else: 
         assert len(p_threshold) > 0 and L is not None
 
-        # Compute a label place holder for the training instances (LSTM requires that the input and output sequence have the same length)
-        # Why? Indeed we know `L_train` but we may not want to rely on it too much. After the model is trained at the prediction/test time, 
-        # we will no longer have the labeling information (i.e. when calling model.predict(X_test)); 
+        # Either use zero-padding or compute a label place holder for the training instances 
+        # (LSTM requires that the input and output sequence have fixed, pre-specified lengths)
+
+        # Why a placeholder instead of the true label? 
+        # Indeed we know `L_train` but we may not want to rely on it too much. After the model is trained at the prediction/test time, 
+        # we will no longer have the labeling information (i.e. upon calling model.predict(X_test)); 
         # this means that we cannot make the test instances with the label in it (because ultimately the class label for T is what 
         # we are aiming to predict)
         # 
-        # What we could do instead is to infer the labeling using the ratings and probability thresholds, which can also be equally done 
-        # at the prediction/test time
+        # What we could do instead is to infer the labeling using the ratings and probability thresholds, which are equally accessible 
+        # during the prediction/test time
         L_train_est = uc.estimateLabels(R, p_th=p_threshold) # this by default uses majority vote
 
         for j in range(R.shape[1]):
