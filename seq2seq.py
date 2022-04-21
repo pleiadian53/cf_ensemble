@@ -159,7 +159,7 @@ def get_lstm_connecting_states(n_timesteps=4, n_features=10, n_units=10,
     dense = TimeDistributed(Dense(n_features, activation=activation))
     output = dense(all_state_h)
 
-    model_LSTM_return_state = Model(input,output,name='model_LSTM_return_state')
+    model_LSTM_return_state = Model(input, output,name='model_LSTM_return_state')
     model_LSTM_return_state.compile(loss=loss, optimizer=keras.optimizers.Adam(lr=0.001), 
         metrics=['accuracy'])
 
@@ -200,21 +200,22 @@ def get_stacked_lstm(n_timesteps=4, n_features=10, n_units=10,
     """
     numberOfLSTMCells = n_units
 
-    input= Input(shape=(n_timesteps, n_features))
+    input_seq= Input(shape=(n_timesteps, n_features))
     lstm1 = LSTM(numberOfLSTMCells, return_sequences=True, return_state=True)
 
-    all_state_h, state_h, state_c = lstm1(input) # all_state_h is already 3D referencing hidden states from all time steps
+    all_state_h, state_h, state_c = lstm1(input_seq) # all_state_h is already 3D referencing hidden states from all time steps
     
     # Note: suppose n_units = 10 and n_timesteps=4, then `all_state_h` has shape (None, 4, 10)
     #       if `return_sequences` <- False, then the LSTM output have been a 2D tensor of shape (None, 10)
     states = [state_h, state_c] # collect hidden and cell states
 
     lstm2 = LSTM(numberOfLSTMCells, return_sequences=True)
-    all_state_h = lstm2(all_state_h, initial_state=states) # init this LSTM layer with the states from previous LSTM layer
+    all_state_h2 = lstm2(all_state_h, initial_state=states) # init this LSTM layer with the states from previous LSTM layer
 
     dense = TimeDistributed(Dense(n_features, activation=activation))
-    output = dense(all_state_h)
-    model_LSTM_return_sequences_return_state = Model(input, output,
+    output_seq = dense(all_state_h2)
+    
+    model_LSTM_return_sequences_return_state = Model(input_seq, output_seq,
         name='model_LSTM_all_state_h_return_state')
 
     model_LSTM_return_sequences_return_state.compile(loss=loss, 
@@ -227,7 +228,14 @@ def get_stacked_lstm(n_timesteps=4, n_features=10, n_units=10,
 
     return model_LSTM_return_sequences_return_state
 
-def get_hard_coded_decoder_input_model(batch_size, n_timesteps=4, n_features=10, n_units=16):
+def get_hard_coded_decoder_input_model(batch_size, n_timesteps=4, n_features=10, 
+                                            n_units=16,  # number of LSTM cells
+
+                                            loss='categorical_crossentropy', 
+                                            activation='softmax', 
+                                            optimizer='rmsprop',
+
+                                            **kargs):
     numberOfLSTMunits = n_units 
 
     # The first part is encoder
@@ -244,7 +252,8 @@ def get_hard_coded_decoder_input_model(batch_size, n_timesteps=4, n_features=10,
     decoder_inputs = Input(shape=(1, n_features)) # output 1 token at a time => n_timesteps = 1
     decoder_lstm = LSTM(numberOfLSTMunits, return_sequences=True, 
         return_state=True, name='decoder_lstm')
-    decoder_dense = Dense(n_features, activation='softmax',  name='decoder_dense')
+
+    decoder_dense = Dense(n_features, activation=activation,  name='decoder_dense')
 
     all_outputs = []
 
@@ -259,25 +268,24 @@ def get_hard_coded_decoder_input_model(batch_size, n_timesteps=4, n_features=10,
     # decoder will only process one time step at a time
     # loops for fixed number of time steps: n_timesteps
     for _ in range(n_timesteps):
-            # Run the decoder on one time step
-            outputs, state_h, state_c = decoder_lstm(inputs,
-                                                                                        initial_state=states) # the first `states` is the initial context vector from encoder
-            outputs = decoder_dense(outputs) # 
+        # Run the decoder on one time step
+        outputs, state_h, state_c = decoder_lstm(inputs, initial_state=states) # the first `states` is the initial context vector from encoder
+        outputs = decoder_dense(outputs) # 
             
-            # Store the current prediction (we will concatenate all predictions later)
-            all_outputs.append(outputs) # NOTE: `outputs` is 3D but with only 1 time step: (b_size, 1, n_feature)
+        # Store the current prediction (we will concatenate all predictions later)
+        all_outputs.append(outputs) # NOTE: `outputs` is 3D but with only 1 time step: (b_size, 1, n_feature)
             
-            # Reinject the outputs as inputs for the next loop iteration
-            # as well as update the states
-            inputs = outputs
-            states = [state_h, state_c]
+        # Reinject the outputs as inputs for the next loop iteration
+        # as well as update the states
+        inputs = outputs
+        states = [state_h, state_c]
 
     # Concatenate all predictions such as [batch_size, timesteps, features]
     decoder_outputs = Lambda(lambda x: K.concatenate(x, axis=1))(all_outputs)
 
     # Define and compile model 
     model = Model(encoder_inputs, decoder_outputs, name='model_encoder_decoder')
-    model.compile(optimizer='rmsprop', loss='categorical_crossentropy', metrics=['accuracy'])
+    model.compile(optimizer=optimizer, loss=loss, metrics=['accuracy'])
 
     model_encoder_decoder.summary()
     return model
