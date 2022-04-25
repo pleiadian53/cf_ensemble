@@ -9,6 +9,49 @@
       > but can we avoid havin to estimate T's labels? 
   
 
+
+# stacked LSTM vs attention-based encoder decoder 
+
+
++ attention 
+
+================================================================================
+Guesstimated labeling (on T) via seq2seq-based polarity model model
+================================================================================
+> Labeling accuracy: 0.7104 (it's okay for this to be relatively low)
+> Reliable-to-correct ratio: 0.43696
+> Precision: 0.43695993008641115, Recall: 0.9999996338338946
+> Predcitio(TP): 0.06431998970880165, Recall(TP): 0.9999975124439989 => f1(TP): 0.12086586865127219
+> Error rate: 9.008637117235891e-05
+================================================================================
+Guesstimated labeling (on T) via MAJORITY VOTE
+================================================================================
+> Labeling accuracy: 0.324
+> Reliable-to-correct ratio: 0.324
+> Precision: 0.314086532083989, Recall: 0.4621016250085591
+> P(TP|reliable): 0.07914383296569612, Recall(TP): 0.7910428083512231 => f1(TP): 0.14389133760572956
+> Error rate: 0.00017071006678097718
+
++ stacked LSTM
+================================================================================
+Guesstimated labeling (on T) via seq2seq-based polarity model model
+================================================================================
+> Labeling accuracy: 0.7784 (it's okay for this to be relatively low)
+> Reliable-to-correct ratio: 0.43248
+> Precision: 0.43247993080321107, Recall: 0.9999996300408324
+> Predcitio(TP): 0.0660799894272017, Recall(TP): 0.9999975786983567 => f1(TP): 0.12396814528946565
+> Error rate: 9.080317094298297e-05
+================================================================================
+Guesstimated labeling (on T) via MAJORITY VOTE
+================================================================================
+> Labeling accuracy: 0.304
+> Reliable-to-correct ratio: 0.304
+> Precision: 0.29550526558101176, Recall: 0.44025140945193875
+> P(TP|reliable): 0.0856716946432345, Recall(TP): 0.8353490669514118 => f1(TP): 0.15540533540300205
+> Error rate: 0.00017494271446548824
+
+
+
 # seq2seq training data: zero-padding vs using heuristic for the labeling position
 
 + zero-padding
@@ -18,6 +61,23 @@ Error rate: 0.76128
 [info] n_reliable: 10658, n_unreliable: 14342
        r_reliable: 0.42632, r_unreliable: 0.57368
 [info] Reliability threshold: [0.098 0.084 0.077 0.092 0.064]
+
+================================================================================
+Guesstimated labeling (on T) via seq2seq-based polarity model model
+================================================================================
+> Labeling accuracy: 0.1072 (it's okay for this to be relatively low)
+> Reliable-to-correct ratio: 0.38832
+> Precision: 0.3883199378688099, Recall: 0.9999995879688554
+> Predcitio(TP): 0.07183998850560183, Recall(TP): 0.9999977728334681 => f1(TP): 0.13404981816694486
+> Error rate: 9.78687686819915e-05
+================================================================================
+Guesstimated labeling (on T) via MAJORITY VOTE
+================================================================================
+> Labeling accuracy: 0.1488
+> Reliable-to-correct ratio: 0.1488
+> Precision: 0.14848113038125627, Recall: 0.251751029356807
+> Predcition(TP): 0.10716886824571853, Recall(TP): 0.9821804405780834 => f1(TP): 0.193251449057209
+> Error rate: 0.00020693035715068769
 
 
 + majority vote 

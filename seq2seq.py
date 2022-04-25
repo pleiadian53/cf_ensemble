@@ -7,16 +7,21 @@ from tensorflow.keras import models
 from numpy import array_equal
 import numpy as np
 
+import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import LSTM, Bidirectional
-from tensorflow.keras.layers import Dense, Flatten
+from tensorflow.keras.layers import Dense, Flatten, Lambda
 from tensorflow.keras import Input
 from tensorflow.keras.layers import TimeDistributed
 from tensorflow.keras.layers import RepeatVector
-from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.callbacks import EarlyStopping, CSVLogger, TensorBoard, LearningRateScheduler
 from tensorflow.keras.utils import plot_model
 import matplotlib.pyplot as plt
+
+tf.keras.backend.set_floatx('float64')
+
+from sklearn.model_selection import train_test_split
 
 
 # Sample seq2seq problems 
@@ -290,34 +295,301 @@ def get_hard_coded_decoder_input_model(batch_size, n_timesteps=4, n_features=10,
     model_encoder_decoder.summary()
     return model
 
+# Sample attention models
+################################################################################
+
+class BahdanauAttention(tf.keras.layers.Layer):
+    def __init__(self, units, verbose=0):
+        super(BahdanauAttention, self).__init__()
+        self.W1 = tf.keras.layers.Dense(units)
+        self.W2 = tf.keras.layers.Dense(units)
+        self.V = tf.keras.layers.Dense(1)
+        self.verbose= verbose
+
+    def call(self, query, values):
+        if self.verbose:
+            print('\n******* Bahdanau Attention STARTS******')
+            print('query (decoder hidden state): (batch_size, hidden size) ', query.shape)
+            print('values (encoder all hidden state): (batch_size, max_len, hidden size) ', values.shape)
+
+        # Why expand_dims()? 
+        # query hidden state shape == (batch_size, hidden size)
+        # query_with_time_axis shape == (batch_size, 1, hidden size)
+
+        # values shape == (batch_size, max_len, hidden size)
+        # we are doing this to broadcast addition along the time axis (of length `max_len`) to calculate the score
+        query_with_time_axis = tf.expand_dims(query, 1)
+    
+        if self.verbose:
+            print('query_with_time_axis:(batch_size, 1, hidden size) ', query_with_time_axis.shape)
+
+        # score shape == (batch_size, max_length, 1)
+        # we get 1 at the last axis because we are applying score to self.V
+        # the shape of the tensor before applying self.V is (batch_size, max_length, units)
+        score = self.V(tf.nn.tanh(
+                          self.W1(query_with_time_axis) + self.W2(values))) # V: units -> 1
+        # Note: broadcast query_with_time_axis (None, 1, hsize) -> (None, 4, hsize)
+        #       at every encoder hidden state, it sees the same `ht`
+
+        if self.verbose:
+            print('score: (batch_size, max_length, 1) ',score.shape)
+    
+        # attention_weights shape == (batch_size, max_length, 1)
+        attention_weights = tf.nn.softmax(score, axis=1) # one score per time step; axis=1 => normalize over all time steps
+        if self.verbose:
+            print('attention_weights: (batch_size, max_length, 1) ', attention_weights.shape)
+        
+        # context_vector shape before sum == (batch_size, max_len, hidden_size)
+        context_vector = attention_weights * values # (None, 4, 1) * (None, 4, 16)
+        # Tip: fix first two dimension, then we effectively mutiply the weight (1-D) across each vector of 16-D
+        #.     => do this for all examples in the batch and for all time steps
+        # Patten: 
+        # 
+        # x     v v v v v 
+        # x     v v v v v
+        # x     v v v v v
+        # x     v v v v v
+        # 
+        # (4, 1) * (4, 5) => (4, 5), each weight of 1-D gets multipled cross each vector of 5-D 
+        # (4, 1) -> broadcast -> (4, 5)
+        # (4, 5) * (4, 5) as in element-wise mul
+
+        if self.verbose:
+            print('context_vector before reduce_sum: (batch_size, max_length, hidden_size) ', context_vector.shape)
+    
+        # context_vector shape after sum == (batch_size, hidden_size) # weighted average over all timesteps => marginalize time axis (axis=1)
+        context_vector = tf.reduce_sum(context_vector, axis=1)
+        if self.verbose:
+            print('context_vector after reduce_sum: (batch_size, hidden_size) ', context_vector.shape)
+            print('\n******* Bahdanau Attention ENDS******')
+    
+        return context_vector, attention_weights
+
+def get_attention_encoder_decoder_model(n_timesteps=4, n_features=10, 
+                                            n_units=16,  # number of LSTM cells
+
+                                            batch_size=1, 
+
+                                            loss='categorical_crossentropy', 
+                                            activation='softmax', 
+                                            optimizer='rmsprop',
+
+                                            input_encoding='one-hot',
+
+                                            **kargs): 
+    # tf.keras.backend.set_floatx('float64')
+
+    verbose = kargs.get('verbose', 0)
+    start_token = kargs.get('start_token', np.zeros(n_features)) # used only when not using one-hot encoding
+
+    latentSpaceDimension = n_units
+
+    if verbose:
+        print('***** Model Hyper Parameters *******')
+        print('latentSpaceDimension: ', latentSpaceDimension)
+        print('batch_size: ', batch_size)
+        print('sequence length: ', n_timesteps)
+        print('n_features: ', n_features)
+
+        print('\n***** TENSOR DIMENSIONS *******')
+
+    # The first part is encoder 
+    encoder_inputs = Input(shape=(n_timesteps, n_features), name='encoder_inputs')
+    encoder_lstm = LSTM(latentSpaceDimension, return_sequences=True, return_state=True,  name='encoder_lstm')
+    encoder_outputs, encoder_state_h, encoder_state_c = encoder_lstm(encoder_inputs)
+    # NOTE: `encoder_outputs` contains hidden states from all timesteps
+
+    if verbose:
+        print ('Encoder output shape: (batch size, sequence length, latentSpaceDimension) {}'.format(encoder_outputs.shape))
+        print ('Encoder Hidden state shape: (batch size, latentSpaceDimension) {}'.format(encoder_state_h.shape))
+        print ('Encoder Cell state shape: (batch size, latentSpaceDimension) {}'.format(encoder_state_c.shape))
+
+    # initial context vector is the states of the encoder
+    encoder_states = [encoder_state_h, encoder_state_c]
+    if verbose:
+        print(f"[info] Encoder states: {encoder_states}")
+
+    # Set up the attention layer
+    attention= BahdanauAttention(latentSpaceDimension, verbose=verbose)
+
+    # Set up the decoder layers
+    decoder_inputs = Input(shape=(1, (n_features + latentSpaceDimension)),name='decoder_inputs')
+    # Each time-step of the decoder input (ht) is the concatenation of raw input and the context vector 
+    # i.e. n_features + latentSpaceDimension: input data || latent feature representation
+
+    decoder_lstm = LSTM(latentSpaceDimension,  return_state=True, name='decoder_lstm')
+    decoder_dense = Dense(n_features, activation=activation,  name='decoder_dense')
+
+    all_outputs = []
+
+    # 1 initial decoder's input data
+
+    if input_encoding.startswith("one"): 
+        # Prepare initial decoder input data that just contains the start character 
+        # Note that we made it a constant one-hot-encoded in the model
+        # that is, [1 0 0 0 0 0 0 0 0 0] is the first input for each loop
+        # one-hot encoded zero(0) is the start symbol
+        inputs = np.zeros((batch_size, 1, n_features)) # start token
+        inputs[:, 0, 0] = 1 
+    else: 
+        inputs = np.zeros((batch_size, 1, n_features)) # start token
+        assert len(start_token) == n_features
+        # if np.isscalar(start_token): start_token = np.repeat(start_token, n_features)
+        inputs[:, 0, :] = start_token 
+
+    # 2 initial decoder's state
+    # encoder's last hidden state + last cell state
+    decoder_outputs = encoder_state_h
+    states = encoder_states
+    if verbose:
+        print('initial decoder inputs: ', inputs.shape) # (1, 1, 10)
+        print(f'ht (t=0): {encoder_state_h.shape}') # (None, 16)
+        print(f"last encoder states: {states[0].shape}, {states[1].shape}") # (None, 16), (None, 16)
+
+
+    # decoder will only process one time step at a time.
+    for step in range(n_timesteps):
+
+        # 3 pay attention
+        # create the context vector by applying attention to 
+        # decoder_outputs (last hidden state) + encoder_outputs (all hidden states)
+        context_vector, attention_weights = attention(decoder_outputs, encoder_outputs)
+        if verbose:
+            print("[{}] Attention context_vector: (batch size, units) {}".format(step, context_vector.shape)) # (None, 16)
+            print("[{}] Attention weights : (batch_size, sequence_length, 1) {}".format(step, attention_weights.shape)) # (None, 4, 1)
+            print('     decoder_outputs: (batch_size,  latentSpaceDimension) ', decoder_outputs.shape ) # (None, 16)
+
+        context_vector = tf.expand_dims(context_vector, 1) # 2D -> 3D by adding time dimension
+        if verbose:
+            print('Reshaped context_vector: ', context_vector.shape ) # (None, 16) -> (None, 1, 16)
+            print(f'shape(inputs): {inputs.shape}')
+            
+            # NOTE: 
+            # (None, 1, 16) || (1, 1, 10)? to concatenate `context_vector` and `inputs`, we need to ensure that two tensors have the same float type
+            # 
+            # tf.keras.backend.set_floatx('float64') # <<< 
+
+        # 4. concatenate the input + context vectore to find the next decoder's input
+        inputs = tf.concat([context_vector, inputs], axis=-1)
+        
+        if verbose:
+            print('> After concat inputs: (batch_size, 1, n_features + hidden_size): ', inputs.shape ) 
+            # 1. (None, 1, 16)-> (1, 1, 16)  
+            # 2. (1, 1, 16) || (1, 1, 10) => (1, 1, 26)
+
+        # 5. passing the concatenated vector to the LSTM
+        # Run the decoder on one timestep with attended input and previous states
+        decoder_outputs, state_h, state_c = decoder_lstm(inputs,  # <<< inputs with context
+                                                initial_state=states)
+        # decoder_outputs = tf.reshape(decoder_outputs, (-1, decoder_outputs.shape[2]))
+      
+        outputs = decoder_dense(decoder_outputs)
+
+        # 6. Use the last hidden state for prediction the output
+
+        # save the current prediction
+        # we will concatenate all predictions later
+        outputs = tf.expand_dims(outputs, 1)
+        all_outputs.append(outputs)
+
+        # 7. Reinject the output (prediction) as the input for the next loop iteration
+        # as well as update the states
+        inputs = outputs
+        states = [state_h, state_c]
+
+        if verbose: print(f"> Step #{step} completed.")
+
+    if verbose: 
+        print(f"[info] size(all_outputs): {len(all_outputs)}")
+        print(f"... example shape:\n{all_outputs[0].shape}\n")
+    # 8. After running Decoder for max time steps
+    # we had created a predition list for the output sequence
+    # convert the list to output array by Concatenating all predictions 
+    # such as [batch_size, timesteps, features]
+    decoder_outputs = Lambda(lambda x: K.concatenate(x, axis=1))(all_outputs)
+
+    # 9. Define and compile model 
+    model_encoder_decoder_Bahdanau_Attention = Model(encoder_inputs, 
+                                                     decoder_outputs, name='model_encoder_decoder')
+    model_encoder_decoder_Bahdanau_Attention.compile(optimizer=optimizer, 
+                                                     loss=loss, metrics=['accuracy'])
+
+    return model_encoder_decoder_Bahdanau_Attention
+
 
 # Training, Testing and Evalution
 ####################################################################
 
 # Function to Train & Test  given model (Early Stopping monitor 'val_loss')
-def train_test(model, X_train, y_train, X_test, y_test, epochs=500, verbose=0):
+def train_test(model, X_train, y_train, X_test, y_test, 
+                 batch_size=32, epochs=300, **kargs):
+    # from sklearn.model_selection import train_test_split
 
-    validation_split = 0.1
-    patience = 20
+    validation_split = kargs.get('validation_split', 0.1)
+    patience = kargs.get('patience', 20)
+
+    verbose = kargs.get('verbose', 0)
+    random_state = kargs.get('random_state', 53)
+    n_train = X_train.shape[0]
 
     # patient early stopping
     #es = EarlyStopping(monitor='val_accuracy', mode='max', min_delta=1, patience=20)
-    es = EarlyStopping(monitor='val_loss', 
-        mode='min', verbose=1, patience=patience)
+    #es = EarlyStopping(monitor='val_loss', mode='min', verbose=1, patience=patience)
+    es = EarlyStopping(
+              patience=patience,
+              min_delta=0.05,
+              baseline=0.8,
+              mode='min',
+              monitor='val_loss',
+              restore_best_weights=True,
+              verbose=1)
+    csv_file = kargs.get('csv_file', 'polarity-seq2seq1-training.csv')
+
+ 
+    # train validation split
+    X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=validation_split, random_state=random_state)
+
+    # Prepare the training dataset   
+    train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train))
+    train_dataset = train_dataset.shuffle(buffer_size= n_train // 4).batch(batch_size, drop_remainder=True).prefetch(1)
+    # NOTE: .prefetch() allows later elements to be prepared while the current element is being processed. 
+    #       This often improves latency and throughput, at the cost of using additional memory to store prefetched elements.
+
+    val_dataset = tf.data.Dataset.from_tensor_slices((X_val, y_val))
+    val_dataset = val_dataset.batch(batch_size, drop_remainder=True).prefetch(1)
+
+    # Prepare the test dataset 
+    test_dataset = tf.data.Dataset.from_tensor_slices((X_test, y_test))
+    test_dataset = test_dataset.batch(batch_size, drop_remainder=True) 
+
+
     # train model
     print(f"> Training for {epochs} epochs: validation_split={validation_split}, EarlyStopping(monitor='val_loss', patience={patience})....")
-    history=model.fit(X_train, y_train, validation_split= 0.1, epochs=epochs,  verbose=verbose, callbacks=[es])
-    print(f"> {epochs} epochs training completed ...")
+    history=model.fit(  train_dataset,   # X_train, y_train,
+                          
+                            validation_data=val_dataset,
+                            
+                            epochs=epochs, 
+                            # batch_size=batch_size, 
+                            verbose=verbose, 
+
+                            callbacks=[es, CSVLogger(csv_file)])
+
+    print(f"> {epochs} epochs (bsize={batch_size}) training completed ...")
 
     # report training
     # list all data in history
     # print(history.history.keys())
     # evaluate the model
-    _, train_acc = model.evaluate(X_train, y_train, verbose=0)
-    _, test_acc = model.evaluate(X_test, y_test, verbose=0)
+    _, train_acc = model.evaluate( train_dataset,  # X_train, y_train, 
+                                       # batch_size=batch_size, 
+                                       verbose=0)
+    _, test_acc = model.evaluate( test_dataset,  # X_test, y_test, 
+                                        # batch_size=batch_size, 
+                                        verbose=0)
     
     print('\nPREDICTION ACCURACY (%):')
-    print('Train: %.3f, Test: %.3f' % (train_acc*100, test_acc*100))
+    print('> Train: %.3f, Test: %.3f' % (train_acc*100, test_acc*100))
     
     # summarize history for accuracy
     try: 
@@ -327,7 +599,7 @@ def train_test(model, X_train, y_train, X_test, y_test, epochs=500, verbose=0):
         print(history.history.keys())
         raise ValueError
 
-    plt.title(model.name+' accuracy')
+    plt.title(model.name +' accuracy')
     plt.ylabel('accuracy')
     plt.xlabel('epoch')
     plt.legend(['train', 'val'], loc='upper left')
