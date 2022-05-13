@@ -10,6 +10,14 @@
   
 
 
+# how to optimize the probability thresholds? 
+
+[0.499 0.    0.008 0.    0.006]  ... fmax
+[0.501 0.493 0.234 0.    0.007]  ... balanced acc
+Counter({1: 3710, 0: 40})  ... fmax                  # <<< too many positives? 
+Counter({0: 3005, 1: 745})  ... balanced acc 
+
+
 # stacked LSTM vs attention-based encoder decoder 
 
 

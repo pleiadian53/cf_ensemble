@@ -44,7 +44,11 @@ import numpy as np  # R[line[1]-1, line[2]-1] = line[3]
 
 from pandas import DataFrame, concat
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.externals.joblib import Parallel, delayed
+
+import joblib
+from joblib import Parallel, delayed
+# from sklearn.externals.joblib import Parallel, delayed # deprecated
+
 from sklearn.linear_model import SGDClassifier, LogisticRegression, Lasso, LassoCV, Perceptron
 from sklearn.ensemble import AdaBoostClassifier, GradientBoostingClassifier
 from sklearn.dummy import DummyClassifier
@@ -56,7 +60,7 @@ from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis
 from sklearn.svm import SVC
 
 ###############################
-import classifier_util as cu
+import utils_classifier as uclf
 
 from nnls import NNLS
 import common, utilities
@@ -73,7 +77,7 @@ class SpecialStacker(object):
     @staticmethod
     def isDefined(name):
         import inspect
-        return name in dict(inspect.getmembers(sys.modules['classifier_util'], inspect.isclass)) 
+        return name in dict(inspect.getmembers(sys.modules['utils_classifier'], inspect.isclass)) 
 
 def mean_stacker(test_df, test_labels=None): 
     return aggregate(test_df, op=np.mean)
@@ -315,69 +319,8 @@ def base_models(fold, **kargs):
     return
 
 def choose_classifier(name, **kargs): 
-    print('(choose_classifier) stacker_name = %s' % name)
+    return uclf.choose_classifier(name, **kargs)
 
-    stacker = None
-    if name.startswith('percep'):  # perceptron
-        stacker = SGDClassifier(loss = 'perceptron', n_iter = 50, random_state = 0)   # loss = 'log' => logistic regression
-        # stacker = Perceptron(tol=1e-3, random_state=0, penalty='l2') # does not have predict_probs()
-    elif name.startswith('log'):
-        stacker = LogisticRegression(penalty='l2', tol=1e-4, warm_start=False, solver='sag') # max_iter=int(1e4), class_weight='balanced'
-    elif name == 'enet':
-        params = {'penalty': 'elasticnet', 'alpha': 0.01, 'loss': 'modified_huber', 
-                     'fit_intercept': True, 'random_state': 0, 'tol': 1e-4}   # 'tol': 1e-3, 
-        stacker = SGDClassifier(**params)
-        # print('(customize_stacker) elastic net: ')
-        # model.fit(X_train, y_train)  # predict(X_test)
-    elif name == 'lasso':
-        # max_iter is useful only for the newton-cg, sag and lbfgs solvers. Maximum number of iterations taken for the solvers to converge.
-        stacker = LogisticRegression(penalty='l1', solver='saga',
-                              tol=1e-4, 
-                              warm_start=False) # set warm_start to reuse learned coeffs
-
-    elif name.startswith(('qda', 'quad')):  # QDA 
-        # default: priors=None, reg_param=0.0, store_covariance=False, tol=0.0001
-        stacker = QuadraticDiscriminantAnalysis() 
-    
-    elif name.startswith(('svm', 'svc', )):  # SVM with linear kernel 
-        # default: C=1.0, kernel=’rbf’, degree=3, gamma=’auto_deprecated’, coef0=0.0, shrinking=True, probability=False, tol=0.001,
-        stacker = svc = SVC(probability=True, kernel='linear', class_weight='balanced') 
-
-    elif name.startswith(('rf', 'randomf','random_f')):
-        stacker = RandomForestClassifier(n_estimators = kargs.get('n_estimators', 150), 
-                    max_depth = 2, bootstrap = False, random_state = 0)
-
-    elif name.startswith(('nai', ) ):   # naive bayes
-        stacker = GaussianNB()          # default: priors=None, var_smoothing=1e-09
-
-    elif name.startswith('ada'): # AdaBoost with base_estimator as decision tree 
-        stacker = AdaBoostClassifier(n_estimators=kargs.get('n_estimators', 100), random_state=0) 
-
-        ### using other base estimator 
-        # svc = SVC(probability=True, kernel='linear')
-        # stacker = AdaBoostClassifier(base_estimator=svc, n_estimators=100, random_state=0)
-    elif name.startswith( ('tree', 'deci') ):  # decision tree classifier
-        # default: criterion='gini', splitter='best', max_depth=None, min_samples_split=2, min_samples_leaf=1, min_weight_fraction_leaf=0.0, max_features=None, random_state=None, max_leaf_nodes=None
-        stacker = DecisionTreeClassifier(class_weight='balanced', criterion = "gini", random_state = 100,
-                       max_depth=4, min_samples_leaf=5)
-
-    elif name.startswith(('grad', 'gb')):  # gradient boost tree 
-        stacker = GradientBoostingClassifier(n_estimators=kargs.get('n_estimators', 150), 
-                    learning_rate=0.1, 
-                    # random_state=53, 
-                    min_samples_split=250, min_samples_leaf=5, max_depth=4,  # prevent overfitting
-                    max_features = 'sqrt', # Its a general thumb-rule to start with square root.
-                    subsample=0.8) # fraction of samples to be used for fitting the individual base learners
-    elif name.startswith(('knn', 'neighbor')): 
-        stacker =  KNeighborsClassifier(n_neighbors=5)
-
-    # [test]
-    assert callable(getattr(stacker, 'fit', None)), "Unsupported classifier: {name}".format(name=name)
-    # a valid classifier should provide the following operations
-    #     model = stacker.fit(train_df, train_labels)
-    #     test_predictions = model.predict_proba(test_df)[:, 1]  # 1/foldCount worth of data
-
-    return stacker
 # use non-negative least squares for regression
 def customize_stacker(stacker=None, **kargs): 
     """
@@ -561,30 +504,40 @@ def run(stacker=None, **kargs):
 
     return predictions_df
 
-########################################################################################
-# ... Global configuration
-user = getpass.getuser() # 'pleiades' 
-prefix = '/Users/%s/Documents/work/' % user  # /Users/<username>/Documents/work/data/recommender
-dataset_name = 'diabetes_cf'
-project_path = abspath(argv[1]) if len(argv) > 1 else os.path.join(prefix, 'data/%s' % dataset_name) # project path: e.g. /Users/pleiades/Documents/work/data/diabetes_cf
-assert exists(project_path), "sys.argv: %s" % argv
-if not exists('%s/analysis' % project_path):
-    mkdir('%s/analysis' % project_path)
+def app(prefix=None, project_path=None, stacker=None, **kargs): 
+    ########################################################################################
+    # ... Global configuration
+    if prefix is None: 
+        user = getpass.getuser() # 'pleiades' 
+        prefix = '/Users/%s/Documents/work/' % user  # /Users/<username>/Documents/work/data/recommender
+    assert exists(prefix), f"Invalid prefix: {prefix}"
 
-method = argv[2] if len(argv) > 2 else 'standard'
-assert method in ['aggregate', 'standard']  # aggregate all bags? 
-p = common.load_properties(project_path, config_file='config.txt')  # parse config.txt (instead of weka.properties)
+    if not project_path: 
+        dataset_name = 'diabetes_cf'
+        project_path = abspath(argv[1]) if len(argv) > 1 else os.path.join(prefix, 'data/%s' % dataset_name) # project path: e.g. /Users/pleiades/Documents/work/data/diabetes_cf
+    assert exists(project_path), "sys.argv: %s" % argv
+    
+    if not exists('%s/analysis' % project_path):
+        mkdir('%s/analysis' % project_path)
 
-fold_count = int(p['foldCount'])
-bag_count = int(p['bagCount']) if 'bagCount' in p else int(p['bags']) 
-bags = bag_values = range(bag_count) if bag_count > 1 else [0]
+    method = argv[2] if len(argv) > 2 else 'standard'
+    assert method in ['aggregate', 'standard']  # aggregate all bags? 
 
-# level 1 data (e.g. for training CF)
-l1_data_path = os.path.join(project_path, 'LEVEL1')
-if not exists(l1_data_path):
-    # os.makedirs(l1_data_path) # creating multiple directories at once
-    os.mkdir(l1_data_path)
-########################################################################################
+    p = common.load_properties(project_path, config_file='config.txt')  # parse config.txt (instead of weka.properties)
+    fold_count = int(p['foldCount'])
+    bag_count = int(p['bagCount']) if 'bagCount' in p else int(p['bags']) 
+    bags = bag_values = range(bag_count) if bag_count > 1 else [0]
+
+    # level 1 data (e.g. for training CF)
+    l1_data_path = os.path.join(project_path, 'LEVEL1')
+    if not exists(l1_data_path):
+        # os.makedirs(l1_data_path) # creating multiple directories at once
+        os.mkdir(l1_data_path)
+    ########################################################################################
+
+    run(stacker, **kargs)
+
+    return
 
 def t_stacker(**kargs):
     from analyze_performance import Analysis

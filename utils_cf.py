@@ -271,72 +271,15 @@ def is_item_dim(cf_dim, setting=-1):
 
 ############################################################
 
-# utils_cf
+# [refactor] combiner.py
 def combiner(Th, weights=None, aggregate_func=np.mean, axis=0, **kargs): 
-    """
+    import combiner as comb
+    return comb.combine(Th, weights=weights, aggregate_func=aggregate_func, axis=axis, **kargs)
 
-    Use 
-    ---
-    1. Th contains reconstructed probabilities 
-
-    2. Th contains preference scores 
-
-       combiner(Th, aggregate_func='pref', T=T)
-    """
-    # two cases: Th holds the predictive labels OR Th is a 'rating matrix' (users/classifiers vs items/data)
-    nrow = 1 
-    try: 
-        nrow, ncol = Th.shape[0], Th.shape[1]  # Th is 2D
-    except: 
-        nrow = 1 
-        ncol = len(Th)
-        Th = Th[np.newaxis, :]
-
-    # W = weights
-    if isinstance(aggregate_func, str): 
-        if aggregate_func.startswith('pref'): 
-            assert 'T' in kargs and kargs['T'] is not None, "Missing T"
-            T = kargs['T']
-            return combiner_pref(Th, T)  # return predictive scores
-        elif aggregate_func in ('mean', 'av'): # mean or average 
-            if weights is not None: 
-                print('(combiner) aggregate_func: mean | using predict_by_importance_weights() | n(zeros):{}'.format(np.sum(weights==0)))
-                return predict_by_importance_weights(Th, weights, aggregate_func='mean', fallback_on_low_weight=True, min_weight=0.1)
-            return np.mean(Th, axis=axis)  # e.g. mean prediction of users/classifiers
-        elif aggregate_func == 'median':
-            if weights is not None: 
-                return predict_by_importance_weights(Th, weights, aggregate_func='median', fallback_on_low_weight=True, min_weight=0.1)
-            return np.median(Th, axis=axis) 
-        else: 
-            raise NotImplementedError
-    else: 
-        assert hasattr(aggregate_func, '__call__')
-        predictions = aggregate_func(Th, axis=axis)  # e.g. mean prediction of users/classifiers
-
-    return predictions
-
-def combiner_pref(Th, T): 
-    predictions = []
-
-    n_zero_pref = 0
-    for i in range(Th.shape[1]):
-        pref = Th[:, i]
-        prob = T[:, i]
-
-        s = np.sum(pref)
-        assert s <= pref.size
-
-        if s > 0: 
-            y_score = np.dot(pref, prob) / s
-        else: 
-            print('(combiner_pref) None of the BP prediction are reliabel? sum(pref)=0 at data #%d' % i)
-            y_score = np.mean(prob)
-            n_zero_pref += 1 
-
-        predictions.append(y_score)
-    if n_zero_pref > 0: print('(combiner_pref) Found %d instances with preference score = 0!' % n_zero_pref)
-    return np.array(predictions)
-
+def combiner_pref(Th, T):  
+    import combiner as comb 
+    return comb.combiner_pref(Th, T)
+    
 def pairwise_similarity(ratings, kind='user', epsilon=1e-9):
     import utils_knn as uknn
     return uknn.pairwise_similarity(ratings, kind=kind)
@@ -1306,7 +1249,7 @@ def to_rating_matrix2(fold, **kargs):
     # return (R, T, L_train, L_test, U)  # U: users/classifiers
     return dsp.to_rating_matrix2(fold, **kargs)
 
-def estimateProbThresholds(R, L=[], pos_label=1, neg_label=0, policy='prior', ratio_small_class=0.01):
+def estimateProbThresholds(R, L=[], pos_label=1, neg_label=0, policy='fmax', ratio_small_class=0.01):
     """
 
     Memo
@@ -1352,6 +1295,9 @@ def estimateProbThresholds(R, L=[], pos_label=1, neg_label=0, policy='prior', ra
         else: 
             policy = 'ratio'  # unsupervised, given only an estimted ratio of the minority class (typically positive class)  
 
+    if R.ndim == 1: 
+        R = R.reshape(1, -1)  # Assuming that this rating matrix has only 1 user/classifier
+
     thresholds = []
     if policy.startswith( ('prior', 'top' )):  # i.e. top k probabilities as positives where k = n_pos examples in the training split
         assert len(L) > 0, "Labels must be given in 'prior' mode (in order to estimate the lower bound of top k probabilities for positive class)"
@@ -1361,10 +1307,30 @@ def estimateProbThresholds(R, L=[], pos_label=1, neg_label=0, policy='prior', ra
             p_th = R[i, np.argsort(R[i])[:-k-1:-1]][-1]  # min of top k probs
             thresholds.append(p_th)
     elif policy == 'fmax':
-        # print("(estimateProbThresholds) policy: fmax")
-        from evaluate import findOptimalCutoff   #  p_th <- f(y_true, y_score, metric='fmax', pos_label=1)
-        thresholds = findOptimalCutoff(L, R, metric=policy, beta=1.0, pos_label=1) 
-    
+        import utils_classifier as uclf
+
+        print("(estimateProbThresholds) policy: fmax")
+        # from evaluate import findOptimalCutoff   #  p_th <- f(y_true, y_score, metric='fmax', pos_label=1)
+        # thresholds = findOptimalCutoff(L, R, metric=policy, beta=1.0, pos_label=pos_label) 
+  
+        for i in range(R.shape[0]):  # one threshold per user/classifier
+            thresholds.append( 
+                uclf.fmax_threshold(L, R[i], pos_label=pos_label))
+
+    elif policy.startswith('auc'):
+        import utils_classifier as uclf 
+
+        for i in range(R.shape[0]):  # one threshold per user/classifier
+            thresholds.append( 
+                uclf.auc_threshold(L, R[i], pos_label=pos_label))
+
+    elif policy.startswith(('acc', 'bal')): # the threshold that max balanced accuracy
+        import utils_classifier as uclf 
+
+        for i in range(R.shape[0]):  # one threshold per user/classifier
+            thresholds.append( 
+                uclf.acc_max_threshold(L, R[i], pos_label=pos_label))        
+
     elif policy == 'ratio':  # user provided an estimated ratio of the minority class, perhaps more conservative than 'prior' 
         assert ratio_small_class > 0, "'ratio_small_class' was not set ... "
         k = math.ceil(ratio_small_class * R.shape[1])  # find k candidates in the item direction
@@ -1447,6 +1413,7 @@ def estimateLabelMatrix(R, L=[], p_th=[], pos_label=1, neg_label=0, ratio_small_
     if (hasattr(p_th, '__iter__') and len(p_th) > 0):
         policy = 'thresholding' # classifier-specific probability thresholding (e.g. p_th ~ fmax)
         assert R.shape[0] == len(p_th)
+
     elif isinstance(p_th, float): # heuristic, unsupervised but not practical
         policy = 'thresholding'
         p_th = [p_th, ] * R.shape[0]
@@ -1465,11 +1432,12 @@ def estimateLabelMatrix(R, L=[], p_th=[], pos_label=1, neg_label=0, ratio_small_
         # k = np.sum(L == pos_label)  # top k probabilities => positive
     # print('(estimateLabelMatrix) policy: {}'.format(policy))
 
-    ### computation starts here
+    p_th = np.array(p_th) 
     Lh = np.zeros_like(R).astype(int)
+
     if policy.startswith('thr'): 
         # print("(estimateLabelMatrix) policy: 'thresholding' > thresholds pre-computed:\n{0}\n".format(p_th))
-        Lh = np.where(R >= np.array(p_th)[:, None], pos_label, neg_label)
+        Lh = np.where( R >= p_th[:, None], pos_label, neg_label) # p_th[:, None] to turn p_th into a nx1 column vector
 
         # for i in range(R.shape[0]):  # foreach user/classifeir
         #     cols_pos = R[i] >= p_th[i]
@@ -1480,7 +1448,7 @@ def estimateLabelMatrix(R, L=[], p_th=[], pos_label=1, neg_label=0, ratio_small_
         print("(estimateLabelMatrix) policy: 'prior' > use the top k probs as a gauge for positives...")
 
         p_th = estimateProbThresholds(R, L=L, pos_label=pos_label, policy='prior')
-        Lh = np.where(R >= np.array(p_th)[:, None], pos_label, neg_label)
+        Lh = np.where( R >= p_th[:, None], pos_label, neg_label)
 
         # k = np.sum(L == pos_label)  # top k probabilities => positive
         
@@ -1495,7 +1463,7 @@ def estimateLabelMatrix(R, L=[], p_th=[], pos_label=1, neg_label=0, ratio_small_
         # ratio_small_class estimated externally (e.g. from training set R)
         assert ratio_small_class > 0, "Minority class ratio must be > 0 in order to get an estimate of top k probabilities."
         p_th = estimateProbThresholds(R, L=[], pos_label=pos_label, policy='ratio', ratio_small_class=ratio_small_class)
-        Lh = np.where(R >= np.array(p_th)[:, None], pos_label, neg_label)
+        Lh = np.where( R >= p_th[:, None], pos_label, neg_label)
 
     else: 
         median_predictions = np.median(R, axis=0)
@@ -6087,20 +6055,26 @@ def compute_preference(P, Q, canonicalize=True, binarize=False, p_th=-1, name='X
 
 def predict_by_importance_weights(X, W, aggregate_func='mean', fallback_on_low_weight=True, min_weight=0.1, axis=0):
     def fallback(pv, func): # closure: min_weight
-        # consider the columns where all preference scores are zero, what to do? use the row mean
+        # consider the columns where all weights are zero, what to do? use the row mean
         for j in range(W.shape[1]):  
-            if all(W[:, j] <= min_weight): 
+            if all(W[:, j] <= min_weight): # e.g. situations where all BPs/users have low confidence
                 pv[j] = func(X[:, j])
         return 
+    def is_degenerated():
+        wcol_sum_to_zero = np.sum(W, axis=axis) == 0
+        return any(wcol_sum_to_zero) # each column should sum to a non-zero weight; o.w. it is degenerated
 
     if scipy.sparse.issparse(W): W = W.toarray()
     W = W.astype(float)
 
+    # Handle degenerative cases where some columns are all zeros
     wcol_sum_to_zero = np.sum(W, axis=axis) == 0
     isDegenerated = any(wcol_sum_to_zero)  # each column should sum to a non-zero weight; o.w. it is degenerated
-    wcol_idx = np.where(wcol_sum_to_zero)[0]
+
     if isDegenerated: 
-        # it's possible that none of the classfier's predictions for a given data point was consider "reliable"; hence, some columns are all zeros
+        wcol_idx = np.where(wcol_sum_to_zero)[0]
+
+        # It's possible that none of the classfier's predictions for a given data point was consider "reliable"; hence, some columns are all zeros
         print('(predict_by_importance_weights) Found degenerated cases: {} columns are all zeros!'.format(len(wcol_idx)))
 
         # revert to average? 
@@ -6109,18 +6083,28 @@ def predict_by_importance_weights(X, W, aggregate_func='mean', fallback_on_low_w
                 W[:, j] = 0.5  # all equal weights  
     # W = softmax(W, axis=0)
         
-    # ... all columns in Xpf has at least one non-zero 
-    if aggregate_func == 'mean':
+    # [condition] Now all columns in Xpf has at least one non-zero 
+    assert not is_degenerated(), f"The weight matrix W should not still be degenerated at this point:\n{W}\n"
 
-        pv = np.average(X, weights=W, axis=axis)
+    if isinstance(aggregate_func, str):
+        if aggregate_func == 'mean':
 
-    elif aggregate_func == 'median': 
-        Xh = X * W
-        pv = np.zeros(X.shape[1]) 
-        for j in range(X.shape[1]): 
-            pv[j] = np.median(Xh[:, j][Xh[:, j]>0])  # take median of the non-zero values in a column
+            pv = np.average(X, weights=W, axis=axis) # will only average over non-zero entries
+
+            # NOTE: cannot do X * W and then take the mean along axis=0 because it'll always average over X.shape[0] of elements
+
+        elif aggregate_func == 'median': 
+            Xh = X * W
+            pv = np.zeros(X.shape[1]) 
+            for j in range(X.shape[1]): 
+                pv[j] = np.median(Xh[:, j][Xh[:, j]>0])  # take median of the non-zero values in a column
+        else: 
+            raise NotImplementedError
     else: 
-        raise NotImplementedError
+        if hasattr(aggregate_func, '__call__'): 
+            raise ValueError
+        # W = softmax(W, axis=axis) # softmax helps to ensure that P no degenerative cases and that all weights sum to 1
+        pv = aggregate_func(X, W, axis=axis)  # special aggregate function that takes two matrices
 
     if fallback_on_low_weight:
         func = None
@@ -6181,7 +6165,7 @@ def predict_by_preference(X, Xpf, L=[], W=None, name='Xh', aggregate_func='mean'
             print('(predict_by_preference) Coupling W to preference matrix')
             
             # normalize W first to ensure that W[:,j] falls in [0, 1]
-            Xpf = Xpf * softmax(W, axis=0)
+            Xpf = np.sum(Xpf * softmax(W, axis=0)) # weighted average
 
     if np.isnan(Xpf).any(): 
         print("(predict_by_preference) Pref matrix should not have NaNs but got n={}".format( np.sum(np.isnan(Xpf))) )

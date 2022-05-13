@@ -34,15 +34,51 @@ def is_hard_filter(P, n_codes_ref=None):
     if sparse.issparse(P): P = P.A
     n_codes = np.unique(P)
     
-    if n_codes_ref is None: n_codes_ref = len(set(Polarity.codes.values()))
+    if n_codes_ref is None: # how many unique codes do we expect to observe in a hard filter?
+        n_codes_ref = len(set(Polarity.codes.values()))
 
     if len(n_codes) > n_codes_ref:
         return False 
   
     return True
 
-def infer_probability_filter(X, L, P, p_th, to_polarity=False, min_r_th=1e-3, verbose=0): 
+def to_hard_filter(P, r_th, n_codes_ref=None, dtype='int', inplace=False):
+    if is_hard_filter(P, n_codes_ref): 
+        return P # no-op
+
+    if sparse.issparse(P): P = P.A
+
+    if isinstance(r_th, float): 
+        pass # no-op
+    else:
+        if isinstance(r_th, list): 
+            if len(r_th) != P.shape[0]: raise ValueError(f"Incompatible number of thresholds: {len(r_th)} with shape(X)={P.shape}")
+            r_th = np.array(r_th)
+        else: 
+            if not isinstance(r_th, np.ndarray): 
+                raise ValueError(f"Invalid r_th: {r_th}")
+        r_th = r_th.reshape(-1, 1) # convert r_th to a column vector
+    
+    P_new = P if inplace else P.copy()
+    P_new[P_new >= r_th] = 1
+    P_new[P_new < r_th] = 0
+
+    return P_new.astype(dtype)
+
+def infer_reliability_threshold(X, L, P, p_th, *, policy_threshold='balanced', min_r_th=1e-3, verbose=0):
     """
+    Given the probability/rating matrix (X), labels (L) and predicted filter (P) (and additionally the probability threshold 
+    `p_th` as we need it to infer the label predictions from X), 
+
+    find, for each BP/user, 
+
+    their optimal reliability thresholds individually according to `policy_threshold`
+
+    Note that reliability threshold has a similar meanings and implications as probability threshold except that 
+    their derivations are different. Reliability of a probability (or rating in general) 
+    is also bounded within [0, 1] where 0s represent unreilable (BP-generated, conditional) probabilities 
+    and 1s represent reliabble probabilities. 
+
 
     Parameters
     ----------
@@ -51,10 +87,12 @@ def infer_probability_filter(X, L, P, p_th, to_polarity=False, min_r_th=1e-3, ve
        this is in contrast to a "hard" probaiilty filter where reliable entries are typically encoded by a 
        "hard" 1 and unreliabe entries are encoded by a "hard" 0. 
 
-    R: A rating matrix 
-    L: The class label associated with the rating matrix R
-    p_th: probability thresholds  
+    X: A rating matrix 
+    L: The class label associated with the rating matrix X
+    p_th: probability thresholds 
     """
+    import utils_classifier as uclf
+
     R = T = None
     if isinstance(X, (tuple, list)): 
         R, T = X
@@ -64,6 +102,7 @@ def infer_probability_filter(X, L, P, p_th, to_polarity=False, min_r_th=1e-3, ve
 
     if sparse.issparse(P): P = P.A
 
+    ###############################
     Pr = Pt = None
     if isinstance(P, (tuple, list)):
         Pr, Pt = P
@@ -71,6 +110,7 @@ def infer_probability_filter(X, L, P, p_th, to_polarity=False, min_r_th=1e-3, ve
     else: 
         Pr = P
     assert Pr.shape == R.shape
+    ###############################
 
     if len(L) > n_train: L = L[:, n_train]
 
@@ -79,53 +119,140 @@ def infer_probability_filter(X, L, P, p_th, to_polarity=False, min_r_th=1e-3, ve
 
     # Infer proportion of reliable entries from the training set (i.e. R, rating matrix derived from the training set)
     Po, Lh = probability_filter(R, L, p_th) # Note that probability_filter() gives 0-1 encoding
-    
-    # `Po` takes on values {0, 1}
+    # Note: `Po` takes on values {0, 1}; `Po` is the ground truth while `Pr` is the predicted filter
 
-    # Infer a reliability threshold for each user/classifier using the training data
+    # Infer, for each user/classifier, a reliability threshold using the training data
     # NOTE: 
     #   1. Reliability threshold may depend on the class label (can we really decouple reliability threshold from class label?)
     r_th = []
-    r_th_prior = (Po == 1).sum()/(Po.size+0.0)
-    for i in range(R.shape[0]):
-        # r_th_tp = Pr[i][(Po[i] == 1) & (L == 1)].min() # reliability threshold for TPs
-        # r_th_tn = Pr[i][(Po[i] == 1) & (L == 0)].min() # reliability threshold for TNs
-        
-        idx_reliable = (Po[i] == 1)
-        if idx_reliable.sum() > 0: 
-            # r_th_i = Pr[i][ idx_reliable ].min() # minimum reliability degree in order to be consider reliable
-            # ... min doesn't seem to be a reliable threshold
-
-            r_th_i = idx_reliable.sum()/(n_train+0.0) # use prior as the threshold
-        else: 
-            r_th_i = r_th_prior # global prior
+    
+    if policy_threshold == 'prior': # A. Global prior
+        r_th_global = (Po == 1).sum()/(Po.size+0.0)
+    
+        for i in range(R.shape[0]):
+            # r_th_tp = Pr[i][(Po[i] == 1) & (L == 1)].min() # reliability threshold for TPs
+            # r_th_tn = Pr[i][(Po[i] == 1) & (L == 0)].min() # reliability threshold for TNs
             
-            # idx_unreliable = (Po[i] == 0)
-            # if idx_unreliable.sum() > 0:
-            #     r_th_i = Pr[i][ idx_unreliable ].max() # could this be a lower bound on the reliabilty threshold? Not necessarily
-            # else: 
-            #     raise ValueError(f"Found ill-formed polarity at i={i}:\n{Po[i]}\n")
+            idx_reliable = (Po[i] == 1)
+            if idx_reliable.sum() > 0: 
 
-        r_th.append(r_th_i)
+                # A. Minimum
+                # r_th_i = Pr[i][ idx_reliable ].min() # minimum reliability degree in order to be consider reliable
+                # ... min doesn't seem to be a reliable threshold
+
+                # B. Prior
+                r_th_i = idx_reliable.sum()/(n_train+0.0) # use prior as the threshold
+
+            else: 
+                r_th_i = r_th_gobal # global prior
+                
+                # idx_unreliable = (Po[i] == 0)
+                # if idx_unreliable.sum() > 0:
+                #     r_th_i = Pr[i][ idx_unreliable ].max() # could this be a lower bound on the reliabilty threshold? Not necessarily
+                # else: 
+                #     raise ValueError(f"Found ill-formed polarity at i={i}:\n{Po[i]}\n")
+
+            r_th.append(r_th_i)
+
+    else: # B. Balanced accuracy
+        labels = np.ravel(Po) # true filter value (reliable entries (1s) are those corresponding to TPs and TNs) 
+        predictions = np.ravel(Pr) # predicted filter value
+        r_th_global = uclf.acc_max_threshold(labels, predictions, verbose=0)
+
+        for i in range(R.shape[0]): # foreach BP/user row i, find its threshold individually
+
+            idx_reliable = (Po[i] == 1)
+            if idx_reliable.sum() > 0: 
+                labels = Po[i] # i-th row P
+                predictions = Pr[i]
+                r_th_i = uclf.acc_max_threshold(labels, predictions, verbose=0)
+            else: 
+                r_th_i = r_th_gobal # global prior
+                
+            r_th.append(r_th_i)
+
+    ##########################################################################
     r_th = np.array(r_th)
 
+    return Po, r_th
+
+def infer_probability_filter(X, L, P, p_th, *, policy_threshold='balanced', 
+                                use_ground_truth_fitler=True, 
+                                polarity_encoding=False,
+                                min_r_th=1e-3, verbose=0): 
+    """
+
+    Parameters
+    ----------
+    P: A "soft" probability filter estimated via a polarity model (e.g. a polarity classifier), in which 
+       the reliability of a rating (in R) is represented by a "soft" score between 0 and 1 (i.e. a scalar in [0, 1]); 
+       this is in contrast to a "hard" probaiilty filter where reliable entries are typically encoded by a 
+       "hard" 1 and unreliabe entries are encoded by a "hard" 0. 
+
+    X: A rating matrix 
+    L: The class label associated with the rating matrix X
+    p_th: probability thresholds  
+    """
+    Pr = Pt = None
+    if isinstance(P, (tuple, list)):
+        Pr, Pt = P
+    else: 
+        Pr = P
+
+    ###############################################
+    Po, r_th = infer_reliability_threshold(X, L, P, p_th, 
+                        policy_threshold=policy_threshold, 
+                        min_r_th=min_r_th, verbose=verbose)
+    assert len(r_th) == Pr.shape[0]
+    ###############################################
+    # NOTE: `Po` holds the true filter value for the training split (R)
+
     # [test] 
-    # For training data, we already have the reliability matrix (which is the role that probability filter plays here) 
-    # but let's double check if the estimate is consistent with the one inferred from the true label (Po)
-    Po_prime = (Pr >= r_th.reshape((-1, 1))).astype(int) # note: .reshape turns r_th into a column vector 
-    if not np.array_equal(Po, Po_prime): 
-        n_diff = (Po != Po_prime).sum()
+    # For training data, we already have the "reliability matrix" (Po) (which is the same as the probability filter) 
+    # but let's double check if the estimate is consistent with the one inferred from the data (Po_pred)
+    # Objective: want `Po_pred` ~ `Po`
+
+    Pr_hard = (Pr >= r_th.reshape((-1, 1))).astype(int) # note: .reshape turns r_th into a column vector 
+    if not np.array_equal(Pr_hard, Po): 
+        n_diff = (Pr_hard != Po).sum()
         print(f"Conflict in reliability matrix estimate: { n_diff } entries are different")
         print(f"Error rate: {n_diff/(Po.size+0.0)}")
 
-    if Pt is not None: 
-        Pt = (Pt >= r_th.reshape((-1, 1))).astype(int) # note that `r_th` is the thresholds inferred only from training data
-        Po = np.hstack((Po, Pt))
-
-    if to_polarity: 
-        Po = preference_to_polarity(Po, verify=verbose > 1)
+    # Infer filter values for the test set if given
+    if Pt is None: 
+        Po_pred = Po if use_ground_truth_fitler else Pr_hard
+        # Po_pred = Pr_hard # the predicted hard filter is the just the one inferred from the training set
+    else: 
+        Pt_hard = (Pt >= r_th.reshape((-1, 1))).astype(int) # note that `r_th` is the thresholds inferred only from training data
         
-    return Po, r_th
+        if use_ground_truth_fitler: 
+            Po_pred = np.hstack((Po, Pt_hard)) 
+        else:
+            Po_pred = np.hstack((Pr_hard, Pt_hard)) # combine "hard" filters for training and test sets
+        
+        # [Q] Should we use the "true" filter values for the training data instead of the predicted values?
+        # Po_pred = np.hstack((Po, Pt_hard))
+
+    if polarity_encoding: 
+        Po_pred = to_polarity(Po_pred, verify=verbose > 1)
+        
+    return Po_pred, r_th
+
+def filter_by_majority_vote(X, p_th, **kargs): 
+    import utils_cf as uc
+
+    # Parameters
+    p_threshold = p_th
+    if len(p_threshold) != X.shape[0]: raise ValueError(f"The size of `p_threshold` must equal nrow(X): {X.shape[0]} but given {len(p_threshold)}")
+    pos_label = kargs.get('pos_label', 1)
+    dtype = kargs.get('dtype', int)
+
+    lh_maxvote = uc.estimateLabels(X, p_th=p_threshold, pos_label=pos_label) 
+    Lh = uc.estimateLabelMatrix(X, p_th=p_threshold, pos_label=pos_label)
+    
+    P = (Lh == lh_maxvote).astype(dtype) # if the label prediction matches the majority vote, then assign weight of 1 o.w. 0
+
+    return P
 
 # source: utils_cf
 def probability_filter(X, L, p_th, *, to_polarity=False, target_label=None, verbose=0): 
@@ -513,6 +640,23 @@ def make_seq2seq_training_data(R, Po=None, L=None, include_label=True, **kargs):
 
     L: class labels associated with R
 
+    filter_type: 'mask', 'polarity', 'color'
+       - mask (probability filter): uses 0-1 encoding, where 0 represents incorrect predictions (FPs, FNs) and 1 represents correct predictions (TPs, TNs)
+       - preference: uses 0-1 encoding but, unlike a mask (or a probability filter), 0 represents "not preferred" whereas 1 "preferred" 
+         
+         Although 'mask' and 'preference matrix' both uses 0-1 encoding, they are derived differently
+
+       - polarity: similar to "mask" but uses {-1, 1}-encoding
+
+                   if we consider "neutral" particles (e.g. ratings with high uncertainty), 
+                   then 0 can be a valid value as well, which generalizes to a {-1, 0, 1}-encoding
+
+
+       - color: color matrix that generalizes polarity matrix and further distingues between: 
+                TPs (2), TNs (1), FPs (-2), FNs (-1)
+
+                neutral particles are also possible and represented by 0s 
+
 
     Returns
     -------
@@ -523,12 +667,25 @@ def make_seq2seq_training_data(R, Po=None, L=None, include_label=True, **kargs):
     import utils_cf as uc
 
     verbose = kargs.get('verbose', 0)
+    filter_type = kargs.get('filter_type', 'mask') # Options: 'mask' ({0, 1}-encoding), 'polarity', ''
 
     p_threshold = kargs.get('p_threshold', [])
     if Po is None: # If the probability filter is not provided externally, we need to estimate using a default method
         assert len(p_threshold) > 0 and L is not None
         assert (len(p_threshold), len(L)) == R.shape
-        Po = probability_filter(R, L, p_threshold)
+
+        if filter_type.startswith( ("mask", "proba", "filter") ): # 0-1 encoding
+            Po, _ = probability_filter(R, L, p_threshold)
+        elif filter_type.startswith( "po" ):
+            Po, _ = polarity_matrix(R, L, p_threshold) # {-1,1} encoding, possibly including 0
+        elif filter_type == "color":
+            Po, _ = color_matrix(R, L, p_threshold) # {-2, -1, 1, 2} encoding; possibly including 0 and more
+
+        elif filter_type.startswith("pref"):
+            raise NotImplementedError("For preference filter, please provide a pre-computed `Po`")
+        else: 
+            raise ValueError(f"Unrecognized filter type: {filter_type}")
+        
     if L is not None: assert len(L) == R.shape[1]
 
     assert R.shape == Po.shape
@@ -544,32 +701,45 @@ def make_seq2seq_training_data(R, Po=None, L=None, include_label=True, **kargs):
             X.append( R[:, j].reshape(-1, 1) ) # number of "timesteps" is the number of classifiers/users, where ... 
             # ... each object/rating is represented by 1 feature value, which is the rating itself
 
-            Y.append(Po[:, j].reshape(-1, 1) ) # 
+            Y.append(Po[:, j].reshape(-1, 1) ) # `X -> Y` maps a sequence of ratings to a sequence of polarities 
     else: 
         assert len(p_threshold) > 0 and L is not None
 
-        # Either use zero-padding or compute a label place holder for the training instances 
+        # Either use zero-padding or compute a label place older for the training instances 
         # (LSTM requires that the input and output sequence have fixed, pre-specified lengths)
 
-        # Why a placeholder instead of the true label? 
+        # Why do we use a placeholder (or a heuristic label) instead of the true label? 
+        L_heuristic = kargs.get('L_heuristic', "majority_vote")
+
         # Indeed we know `L_train` but we may not want to rely on it too much. After the model is trained at the prediction/test time, 
-        # we will no longer have the labeling information (i.e. upon calling model.predict(X_test)); 
+        # we will no longer have the labeling information (i.e. when calling model.predict(X_test)); 
         # this means that we cannot make the test instances with the label in it (because ultimately the class label for T is what 
         # we are aiming to predict)
         # 
         # What we could do instead is to infer the labeling using the ratings and probability thresholds, which are equally accessible 
         # during the prediction/test time
-        L_train_est = uc.estimateLabels(R, p_th=p_threshold) # this by default uses majority vote
+
+        # Heusristic #1: Majority vote
+        if isinstance(L_heuristic, str): 
+            if L_heuristic.startswith( ('maj', 'max') ): # majority vote
+                L_heuristic = uc.estimateLabels(R, p_th=p_threshold) # this heuristically guessed labeling by default uses majority vote
+            elif L_heuristic.startswith( 'zero' ): # zero-padding
+                L_heuristic = np.zeros(R.shape[1]) # [design] we could instead just assign 0 in the loop
+            else: 
+                raise NotImplementedError(f"Unrecognized label heuristic: {L_heuristic}")
+        else: 
+            msg = f"Invalid `L_heuristic` (hint: L_heuristic should be a list/ndarray of same size as R.shape[1]): {L_heuristic}"
+            assert isinstance(L_heuristic, (list, np.ndarray)) and len(L_heuristic) == R.shape[1], msg
 
         for j in range(R.shape[1]):
-            X.append( np.vstack( (R[:, j].reshape(-1, 1), 0) )) # Guess the label or zero-pad at the end of the rating sequence ... 
+            X.append( np.vstack( (R[:, j].reshape(-1, 1), L_heuristic[j]) )) # Append either a heustically guessed label or zero-pad at the end of the rating sequence ... 
             # ... LSTM requires that the input and output sequence have the same length. 
             # ... The label sequence Y has an additional class label at the end as part of the sequence
             # ... while the input sequence does not (therefore, we needed to either zero pad the input sequence or use 
             # ... a heuristic for the class label so that X[i] and Y[i] share the same length. 
             # Why don't we add class label to X? Because at the prediction time, we will not know the class label (which is to be predicted) 
 
-            Y.append( np.vstack( (Po[:, j].reshape(-1, 1), L[j]) )) # Add the class label and assume positive class as having positive polarity
+            Y.append( np.vstack( (Po[:, j].reshape(-1, 1), L[j]) )) # Also append the class label L[j] and assume positive class as having positive polarity
 
     X = np.array(X)
     Y = np.array(Y)

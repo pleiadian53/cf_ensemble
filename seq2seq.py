@@ -70,6 +70,7 @@ def config_sample_problem(n_features=10, n_timesteps_in=4):
 def get_mlp(n_units=64, n_timesteps=4, n_features=10, 
                 loss='categorical_crossentropy', 
                 activation='softmax',
+                metrics=['accuracy', ],
                 verbose=1): 
 
     numberOfPerceptrons = n_units
@@ -80,7 +81,7 @@ def get_mlp(n_units=64, n_timesteps=4, n_features=10,
     model_Multi_Layer_Perceptron.add(Dense(numberOfPerceptrons))
     model_Multi_Layer_Perceptron.add(Dense(n_features, activation=activation))
 
-    model_Multi_Layer_Perceptron.compile(loss=loss, optimizer=keras.optimizers.Adam(lr=0.001), metrics=['accuracy'])
+    model_Multi_Layer_Perceptron.compile(loss=loss, optimizer=keras.optimizers.Adam(lr=0.001), metrics=metrics)
 
     if verbose: 
         model_Multi_Layer_Perceptron.summary()
@@ -88,7 +89,10 @@ def get_mlp(n_units=64, n_timesteps=4, n_features=10,
 
     return model_Multi_Layer_Perceptron
 
-def get_lstm(n_timesteps=4, n_features=10, n_units=10, loss='categorical_crossentropy', verbose=1): 
+def get_lstm(n_timesteps=4, n_features=10, n_units=10, 
+                loss='categorical_crossentropy', activation='softmax', 
+                metrics=['accuracy', ],
+                verbose=1): 
 
     numberOfUnits = n_units # LSTM output dimension; the number of LSTM cells (each cell outputs 1 value)
 
@@ -102,17 +106,19 @@ def get_lstm(n_timesteps=4, n_features=10, n_units=10, loss='categorical_crossen
     model_Single_LSTM_default_output.add(RepeatVector(n_timesteps)) # e.g. n_timesteps=4, 16-D => 4 x 16 (the same 16D repeated 4 times)
 
     # Dense layer recieves 4 x LSTM outputs as input vector
-    model_Single_LSTM_default_output.add(Dense(n_features, activation='softmax'))
+    model_Single_LSTM_default_output.add(Dense(n_features, activation=activation))
 
-    model_Single_LSTM_default_output.compile(loss=loss, optimizer='adam', 
-        metrics=['accuracy'])
+    model_Single_LSTM_default_output.compile(loss=loss, optimizer='adam', metrics=metrics)
 
     if verbose: 
         model_Single_LSTM_default_output.summary()
 
     return model_Single_LSTM_default_output
 
-def get_lstm_time_distributed(n_timesteps=4, n_features=10, n_units=10, loss='categorical_crossentropy', verbose=1): 
+def get_lstm_time_distributed(n_timesteps=4, n_features=10, n_units=10, 
+                                loss='categorical_crossentropy', activation='softmax', 
+                                metrics=['accuracy', ],
+                                verbose=1): 
 
     numberOfUnits = n_units # LSTM output dimension
 
@@ -130,12 +136,11 @@ def get_lstm_time_distributed(n_timesteps=4, n_features=10, n_units=10, loss='ca
     # The output of the Second LSTM has the 3 dimensions 
     # To supply the output to a dense layer
     # we need to use TimeDistributed layer!
-    model_LSTM_return_sequences.add(TimeDistributed(Dense(n_features, activation='softmax'))) # <<< TimeDistributed(Dense())
+    model_LSTM_return_sequences.add(TimeDistributed(Dense(n_features, activation=activation))) # <<< TimeDistributed(Dense())
     # ... for each LSTM output at each time step (batch_size, n_features), the Dense layer will produce one output predicition 
     # ... since we have `n_timesteps` (say 4) time steps, this gives as (batch_size, n_timesteps, n_features) as the output for time-distributed dense layer
 
-    model_LSTM_return_sequences.compile(loss=loss, optimizer='adam', 
-            metrics=['accuracy'])
+    model_LSTM_return_sequences.compile(loss=loss, optimizer=keras.optimizers.Adam(lr=0.001), metrics=metrics)
 
     if verbose: 
         model_LSTM_return_sequences.summary()
@@ -143,9 +148,10 @@ def get_lstm_time_distributed(n_timesteps=4, n_features=10, n_units=10, loss='ca
     return model_LSTM_return_sequences
 
 def get_lstm_connecting_states(n_timesteps=4, n_features=10, n_units=10, 
-         loss='categorical_crossentropy', 
-         activation='softmax',
-         verbose=1):
+                                loss='categorical_crossentropy', 
+                                activation='softmax',
+                                metrics=['accuracy', ],
+                                verbose=1):
 
     numberOfUnits = n_units
 
@@ -165,18 +171,20 @@ def get_lstm_connecting_states(n_timesteps=4, n_features=10, n_units=10,
     output = dense(all_state_h)
 
     model_LSTM_return_state = Model(input, output,name='model_LSTM_return_state')
-    model_LSTM_return_state.compile(loss=loss, optimizer=keras.optimizers.Adam(lr=0.001), 
-        metrics=['accuracy'])
+    model_LSTM_return_state.compile(loss=loss, optimizer=keras.optimizers.Adam(lr=0.001), metrics=metrics)
 
     if verbose: 
         model_LSTM_return_state.summary() 
 
     return model_LSTM_return_state
 
-def get_stacked_lstm(n_timesteps=4, n_features=10, n_units=10, 
+def get_stacked_lstm(n_timesteps=4, n_features=10, n_features_out=None,
+                        n_units=10, 
                         loss='categorical_crossentropy', 
                         activation='softmax',
-                        verbose=1): 
+                        metrics=['accuracy', ],
+                        optimizer='adam', 
+                        verbose=1, **kargs): 
     """
     A model containing Multiple LSTM Layers by connecting them with return_sequences=True & return_state=True
 
@@ -203,7 +211,9 @@ def get_stacked_lstm(n_timesteps=4, n_features=10, n_units=10,
         <repo>/machine_learning_examples/sequence_model/seq2seq_Part_C_Basic_Encoder_Decoder.ipynb
 
     """
+    output_bias = kargs.get('output_bias', None)
     numberOfLSTMCells = n_units
+    if n_features_out is None: n_features_out = n_features
 
     input_seq= Input(shape=(n_timesteps, n_features))
     lstm1 = LSTM(numberOfLSTMCells, return_sequences=True, return_state=True)
@@ -217,15 +227,15 @@ def get_stacked_lstm(n_timesteps=4, n_features=10, n_units=10,
     lstm2 = LSTM(numberOfLSTMCells, return_sequences=True)
     all_state_h2 = lstm2(all_state_h, initial_state=states) # init this LSTM layer with the states from previous LSTM layer
 
-    dense = TimeDistributed(Dense(n_features, activation=activation))
+    dense = TimeDistributed(Dense(n_features_out, activation=activation))
     output_seq = dense(all_state_h2)
     
     model_LSTM_return_sequences_return_state = Model(input_seq, output_seq,
         name='model_LSTM_all_state_h_return_state')
 
     model_LSTM_return_sequences_return_state.compile(loss=loss, 
-        optimizer=keras.optimizers.Adam(lr=0.001),
-        metrics=['accuracy'])
+        optimizer=optimizer, # keras.optimizers.Adam(lr=0.001),
+        metrics=metrics)
 
     if verbose: 
         model_LSTM_return_sequences_return_state.summary()
@@ -238,6 +248,7 @@ def get_hard_coded_decoder_input_model(batch_size, n_timesteps=4, n_features=10,
 
                                             loss='categorical_crossentropy', 
                                             activation='softmax', 
+                                            metrics=['accuracy', ],
                                             optimizer='rmsprop',
 
                                             **kargs):
@@ -290,7 +301,7 @@ def get_hard_coded_decoder_input_model(batch_size, n_timesteps=4, n_features=10,
 
     # Define and compile model 
     model = Model(encoder_inputs, decoder_outputs, name='model_encoder_decoder')
-    model.compile(optimizer=optimizer, loss=loss, metrics=['accuracy'])
+    model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
 
     model_encoder_decoder.summary()
     return model
@@ -372,6 +383,7 @@ def get_attention_encoder_decoder_model(n_timesteps=4, n_features=10,
 
                                             loss='categorical_crossentropy', 
                                             activation='softmax', 
+                                            metrics=['accuracy', ],
                                             optimizer='rmsprop',
 
                                             input_encoding='one-hot',
@@ -512,7 +524,7 @@ def get_attention_encoder_decoder_model(n_timesteps=4, n_features=10,
     model_encoder_decoder_Bahdanau_Attention = Model(encoder_inputs, 
                                                      decoder_outputs, name='model_encoder_decoder')
     model_encoder_decoder_Bahdanau_Attention.compile(optimizer=optimizer, 
-                                                     loss=loss, metrics=['accuracy'])
+                                                     loss=loss, metrics=metrics)
 
     return model_encoder_decoder_Bahdanau_Attention
 

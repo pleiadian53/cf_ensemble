@@ -15,26 +15,35 @@ plt.style.use('seaborn')  # values: {'seaborn', 'ggplot', }
 from sklearn.metrics import r2_score, precision_recall_curve
 from utils_plot import saveFig
 
-# ElasticNet
-from sklearn.linear_model import ElasticNet
+# Import some basic baseline models 
+from sklearn.linear_model import ElasticNet  # ElasticNet
+from sklearn.ensemble import RandomForestClassifier 
 
 # model selection
 from sklearn.model_selection import cross_val_score
 from itertools import product
 # import operator
 
+# data processing utilities
 import pandas as pd 
 from pandas import DataFrame, Series
 
+# other misc utiliteis
 from utilities import fmax_score
 from utils_sys import div
 import common
 
 # These must have been initialized in the main program (e.g. cf.py)
 # [config]
-import cf_spec
-# ProjectPath = cf_spec.ProjectPath
-# Domain = cf_spec.Domain
+try: 
+    import cf_spec
+    # ProjectPath = cf_spec.ProjectPath
+    # Domain = cf_spec.Domain
+except: 
+    msg = "Warning: Could not locate CF ensemble specification module `cf_spec`"
+    print(msg)
+
+    # But this is ok because we'll just be using generic settings 
 
 class Metrics(object): 
 
@@ -259,7 +268,11 @@ class PerformanceMetrics(Metrics): # or PerformanceComparison
     """
 
     # tracked = ['auc', 'fmax', 'fmax_negative', 'sensitivity', 'specificity', ]  # Metrics.tracked
-    prefix = cf_spec.ProjectPath # os.getcwd()
+    try: 
+        prefix = cf_spec.ProjectPath 
+    except: 
+        previs = os.getcwd()
+
     data_dir = os.path.join(prefix, 'data')  # output directory for the PerformanceMetrics object
     log_dir = os.path.join(prefix, 'log')      
     plot_dir = os.path.join(prefix, 'plot')
@@ -1056,7 +1069,12 @@ class PerformanceMetrics(Metrics): # or PerformanceComparison
             print('(logging) Creating log directory:\n%s\n' % log_dir)
             os.mkdir(log_dir)
 
-        if not domain: domain = cf_spec.Domain  # global var init via cf_spec
+        if not domain: 
+            try: 
+                domain = cf_spec.Domain  # global var init via cf_spec
+            except: 
+                domain = 'generic'
+
         if not file_name: 
             # performance_metrics-{context}-N{size}-D{domain}'.format(context=context, size=size, domain=domain)
             name = '{context}-D{domain}'.format(context=context, domain=domain)
@@ -1303,7 +1321,7 @@ def findOptimalCutoff(L, R, **kargs):
     metric = kargs.get('metric', 'fmax')
     thresholds = []
     if metric == 'auc': 
-        for i in range(R.shape[0]):  # one threshould per user/classifier
+        for i in range(R.shape[0]):  # one threshold per user/classifier
             thresholds.append( findOptimalCutoffAuc(L, R[i]))
 
     elif metric == 'fmax': 
@@ -1390,11 +1408,16 @@ def analyzeBasePerf(L_test, T, U=None, **kargs):
     # from evaluate import PerformanceMetrics
     # U: users/classifiers
 
+    try: 
+        project_path = cf_spec.ProjectPath
+    except: 
+        project_path = os.getcwd()
+
     ### datasink
     if U is None: 
         print('analyzeBasePerf> Warning: Users/Classifiers were not given.')
         fold = kargs.get('fold', 0)
-        train_df, train_labels, test_df, test_labels = common.read_fold(cf_spec.ProjectPath, fold) # [todo] single out this part
+        train_df, train_labels, test_df, test_labels = common.read_fold(project_path, fold) # [todo] single out this part
         # get all data IDs 
         U = train_df.columns.values
         assert len(U) == T.shape[0]
@@ -1768,6 +1791,83 @@ def evalTestSetViaPreference(labels, Th, T, **kargs):
 
     return metrics
 
+#########################################################################
+
+def fit_model(X, Y, model=None):
+    
+    # define the model to use
+    if model is None: model = RandomForestClassifier(criterion='entropy', random_state=47)
+    
+    # Train the model
+    model.fit(X, Y)
+    
+    return model
+
+
+def calculate_metrics_given_predictions(y_true, y_pred, y_pred_label, verbose=0):
+
+    # Performance measures via probability predicitons
+    metrics_scores = getPerformanceScores(y_true, y_pred)
+    # if verbose: print(metrics_scores) # E.g. ['auc', 'fmax', 'fmax_negative', 'sensitivity', 'specificity', 'brier']
+    
+    # Performance measures via label predictions
+    metrics_labels = calculate_metrics_given_labels(y_true, y_pred_label)
+    
+    return metrics_scores, metrics_labels
+
+
+def calculate_metrics_given_labels(y_true, y_pred): 
+    from sklearn.metrics import accuracy_score, roc_auc_score, precision_score, recall_score, f1_score
+    metrics = {}
+    metrics['acc'] = metrics['accuracy'] = accuracy_score(y_true, y_pred)
+    metrics['precision'] = precision_score(y_true, y_pred)
+    metrics['recall'] = recall_score(y_true, y_pred)
+    metrics['f1'] = f1_score(y_true, y_pred)
+
+    # other measures ... 
+
+    return metrics
+
+def calculate_metrics(model, X_test, Y_test):
+    '''Get model evaluation metrics on the test set.'''
+    from sklearn.metrics import accuracy_score, roc_auc_score, precision_score, recall_score, f1_score
+    
+    # Get model predictions
+    y_predict_r = model.predict(X_test)
+    
+    # Calculate evaluation metrics for assesing performance of the model.
+    roc = roc_auc_score(Y_test, model.predict_proba(X_test)[:, 1])
+    acc = accuracy_score(Y_test, y_predict_r)
+    prec = precision_score(Y_test, y_predict_r)
+    rec = recall_score(Y_test, y_predict_r)
+    f1 = f1_score(Y_test, y_predict_r)
+    
+    return acc, roc, prec, rec, f1
+
+def train_and_get_metrics(X, Y, scaler=None):
+    '''Train a Random Forest Classifier and get evaluation metrics'''
+    from sklearn.model_selection import train_test_split
+    
+    # Split train and test sets
+    X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size = 0.2,stratify=Y, random_state = 123)
+
+    # All features of dataset are float values. You normalize all features of the train and test dataset here.
+    if scaler is not None: 
+        # scaler = StandardScaler().fit(X_train)
+        X_train_scaled = scaler.transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+    else: 
+        X_train_scaled = X_train
+        X_test_scaled = X_test
+
+    # Call the fit model function to train the model on the normalized features and the diagnosis values
+    model = fit_model(X_train_scaled, Y_train)
+
+    # Make predictions on test dataset and calculate metrics.
+    roc, acc, prec, rec, f1 = calculate_metrics(model, X_test_scaled, Y_test)
+
+    return acc, roc, prec, rec, f1
+
 def eval_performance(T, labels, **kargs):
     """
     Evaluate performance scores by policy. 
@@ -1776,7 +1876,7 @@ def eval_performance(T, labels, **kargs):
     import stacking
 
     # aggregate_func = kargs.get('aggregate_func', np.mean)
-    mode = kargs.get('mode', 'mean') # options: average (average individual classifier's performance scores)
+    mode = kargs.get('mode', 'comb') # options: average (average individual classifier's performance scores)
     aggregate_func = kargs.get('aggregate_func', 'mean')
 
     ##############################
@@ -1785,7 +1885,7 @@ def eval_performance(T, labels, **kargs):
     weights = kargs.get('weights', None)
     ##############################
 
-    if mode == 'mean':
+    if mode.startswith( ('comb', 'mean', 'agg', ) ):
         # [note] aggregate_func: either a string or a function
         predictions = uc.combiner(T, weights=weights, aggregate_func=aggregate_func)
         # print('... predictions > type:{0}: {1}'.format(type(predictions), predictions[:10]))
@@ -2412,7 +2512,7 @@ def fmax_score(labels, predictions, beta = 1.0, pos_label = 1):
     import sklearn.metrics as skmetrics
     # from numpy import nanmax
 
-    precision, recall, _ = skmetrics.precision_recall_curve(labels, predictions, pos_label)
+    precision, recall, _ = skmetrics.precision_recall_curve(labels, predictions, pos_label=pos_label)
     f1 = (1 + beta**2) * (precision * recall) / ((beta**2 * precision) + recall + 0.0)  # log: invalid value encountered in true_divide
     return np.nanmax(f1)
 
@@ -2474,11 +2574,14 @@ def getPerformanceScores(y_true, y_score, **kargs):
         return table
     import common
 
-    metrics = kargs.get('metrics', Metrics.tracked)
+    y_score_uniq = np.unique(y_score)
+    if len(y_score_uniq) <= 2: 
+        print(f"[evaluation] Warning: `y_score` may be labels while probabilities are expected: {y_score_uniq}")
+
+    metrics = kargs.get('metrics', Metrics.tracked) # E.g. ['auc', 'fmax', 'fmax_negative', 'sensitivity', 'specificity', 'brier']
     metric_table = eval_metrics(metrics, y_true, y_score)  # not all metric is defined in score()
 
     # print('... (verify) got scores for metrics (via eval_metrics()): {metrics}'.format(metrics=list(metric_table.keys())))
-    # ... example: ['auc', 'fmax', 'fmax_negative', 'sensitivity', 'specificity', 'brier']
 
     fmax, pth_fmax = common.fmax_score_threshold(y_true, y_score, beta = 1.0, pos_label = 1)
 
