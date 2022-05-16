@@ -96,6 +96,14 @@ def report(results, n_top=3):
             print("Parameters: {0}".format(results['params'][candidate]))
             print("")
 
+def is_label_prediction(y_pred, n_classes=2):
+    if str(np.array(y_pred).dtype).startswith('int'): 
+        return True
+    values = np.unique(y_pred)
+    if len(values) <= n_classes: 
+        return True
+    return False
+
 def optimize_crf_params(X, y, model, labels, max_size=3000, verfiy=True): 
     import scipy.stats as stats
     from sklearn.metrics import make_scorer
@@ -368,7 +376,7 @@ def fmax_score(labels, predictions, beta = 1.0, pos_label = 1):
     # i = np.nanargmax(f1)
 
     # return (f1[i], threshold[i])
-    return nanmax(f1)
+    return np.nanmax(f1)
 
 def fmax_threshold(labels, predictions, beta = 1.0, pos_label = 1): 
     precision, recall, threshold = metrics.precision_recall_curve(labels, predictions, pos_label=pos_label)
@@ -378,7 +386,7 @@ def fmax_threshold(labels, predictions, beta = 1.0, pos_label = 1):
     f1 = (1 + beta**2) * (precision * recall) / ((beta**2 * precision) + recall)
     i = np.nanargmax(f1)  # the position for which f1 is the max 
     th = threshold[i] if i < len(threshold) else 1.0    # len(threshold) == len(precision) -1 
-    # assert f1[i] == nanmax(f1)
+    # assert f1[i] == np.nanmax(f1)
     return th
 
 def fmax_score_threshold(labels, predictions, beta = 1.0, pos_label = 1):
@@ -415,7 +423,7 @@ def fmax_score_threshold(labels, predictions, beta = 1.0, pos_label = 1):
     f1 = (1 + beta**2) * (precision * recall) / ((beta**2 * precision) + recall)
     i = np.nanargmax(f1)  # the position for which f1 is the max 
     th = threshold[i] if i < len(threshold) else 1.0    # len(threshold) == len(precision) -1 
-    # assert f1[i] == nanmax(f1)
+    # assert f1[i] == np.nanmax(f1)
     return (f1[i], th)
 
 def fmax_precision_recall_scores(labels, predictions, beta = 1.0, pos_label = 1):

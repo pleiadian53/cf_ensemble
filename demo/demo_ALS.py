@@ -263,10 +263,10 @@ def toImplicitRatingMatrix(fold, **kargs):
     ----
     1. analogous to toRatings()
     """
-    def to_label(y_hat, p_threshould=0.5): 
+    def to_label(y_hat, p_threshold=0.5): 
         labels = np.zeros(len(y_hat))
         for i, p in enumerate(y_hat): 
-            if p >= p_threshould: 
+            if p >= p_threshold: 
                labels[i] = 1
         return list(labels)
 
@@ -289,7 +289,7 @@ def toImplicitRatingMatrix(fold, **kargs):
 
     data['train_labels'] = train_labels; data['test_labels'] = test_labels
     
-    p_th = kargs.get('p_threshould')
+    p_th = kargs.get('p_threshold')
     pos_label, neg_label = 1, 0
 
     for split in ['train', 'test', ]: 
@@ -309,7 +309,7 @@ def toImplicitRatingMatrix(fold, **kargs):
         # rating matrix for the training split
         for i, user in enumerate(users): 
             predictions = ts[user].values
-            y_label = to_label(predictions, p_threshould=p_th) 
+            y_label = to_label(predictions, p_threshold=p_th) 
 
             # print('(toPredictiveScores) clf: %s, predictions: %s' % (user, predictions[:10]))
             # if i == 0: assert len(idx) == len(predictions)

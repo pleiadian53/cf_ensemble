@@ -1,5 +1,30 @@
 
+
+# Estimating probability threshold
+
+
+- calculate_label_metrics(y_true, y_pred, **kargs)
+- analyze_reestimated_matrices(train, test, meta, **kargs)
+
+- eval_performance() ... evaluate  rating matrix
+- compareEstimates(T, Th)
+
+# Use the training set to figure out the appropriate probability threshold
+Pr_true, Lh = uc.probability_filter(R, L_train, p_threshold)
+
+# Reduce the probability matrix into a single prediction vector, taking into account ONLY reliable entries
+y_pred_train = combiner.combine_given_filter(R, Pr_true, aggregate_func='mean', axis=0) 
+
+# To find a proper threshold with the prediction vector, use the following utility ...
+p_th = combiner.estimate_threshold_with_reliable_entries(R, L_train, p_threshold, 
+                                                  aggregate_func='mean', 
+                                                  policy_threshold=policy_threshold)
+print(f"> (Combined) probability threshold considering only reliable entries, p_th={p_th}")
+
+
 # Demo 5: Polarity Model
+
+
 
 
 ####################################################################################

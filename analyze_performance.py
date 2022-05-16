@@ -98,7 +98,7 @@ class Analysis(object):
 
     @staticmethod
     def config(domain='', analysis_dn='analysis', create_dir=False):
-        if domain: 
+        if domain and not domain.lower() in ('n/a', 'null', 'ignore', ): 
             # resolve project path e.g. /Users/<user>/work/data/pf1
             # home_dir = os.path.expanduser('~')
             # working_dir_default = '/'.join([home_dir, 'work/data', ])

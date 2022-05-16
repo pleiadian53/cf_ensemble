@@ -6075,7 +6075,7 @@ def predict_by_importance_weights(X, W, aggregate_func='mean', fallback_on_low_w
         wcol_idx = np.where(wcol_sum_to_zero)[0]
 
         # It's possible that none of the classfier's predictions for a given data point was consider "reliable"; hence, some columns are all zeros
-        print('(predict_by_importance_weights) Found degenerated cases: {} columns are all zeros!'.format(len(wcol_idx)))
+        print('(predict_by_importance_weights) Found degenerated cases: {} (All-zero columns). Assign equal weights and take average for these cases'.format(len(wcol_idx)))
 
         # revert to average? 
         for j in wcol_idx: 

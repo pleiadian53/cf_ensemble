@@ -212,11 +212,16 @@ def get_stacked_lstm(n_timesteps=4, n_features=10, n_features_out=None,
 
     """
     output_bias = kargs.get('output_bias', None)
+    if output_bias is not None:
+        output_bias = tf.keras.initializers.Constant(output_bias)
+    dropout = kargs.get("dropout", 0.0)
+
     numberOfLSTMCells = n_units
     if n_features_out is None: n_features_out = n_features
 
     input_seq= Input(shape=(n_timesteps, n_features))
-    lstm1 = LSTM(numberOfLSTMCells, return_sequences=True, return_state=True)
+
+    lstm1 = LSTM(numberOfLSTMCells, return_sequences=True, return_state=True, dropout=dropout) # dropout, recurrent_dropout
 
     all_state_h, state_h, state_c = lstm1(input_seq) # all_state_h is already 3D referencing hidden states from all time steps
     
@@ -227,7 +232,13 @@ def get_stacked_lstm(n_timesteps=4, n_features=10, n_features_out=None,
     lstm2 = LSTM(numberOfLSTMCells, return_sequences=True)
     all_state_h2 = lstm2(all_state_h, initial_state=states) # init this LSTM layer with the states from previous LSTM layer
 
-    dense = TimeDistributed(Dense(n_features_out, activation=activation))
+    if output_bias is None: 
+        dense = TimeDistributed(Dense(n_features_out, activation=activation))
+    else: 
+        dense = TimeDistributed(Dense(
+                                    n_features_out, 
+                                    activation=activation, 
+                                    output_bias=output_bias))
     output_seq = dense(all_state_h2)
     
     model_LSTM_return_sequences_return_state = Model(input_seq, output_seq,

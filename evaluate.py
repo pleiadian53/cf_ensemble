@@ -47,7 +47,7 @@ except:
 
 class Metrics(object): 
 
-    tracked = ['auc', 'fmax', 'fmax_negative', 'sensitivity', 'specificity', 'brier', ]
+    tracked = ['auc', 'fmax', 'fmax_negative', 'sensitivity', 'specificity', 'brier', 'balanced', 'log' ]
 
     def __init__(self, records={}, op=np.mean): 
 
@@ -271,7 +271,7 @@ class PerformanceMetrics(Metrics): # or PerformanceComparison
     try: 
         prefix = cf_spec.ProjectPath 
     except: 
-        previs = os.getcwd()
+        prefix = os.getcwd()
 
     data_dir = os.path.join(prefix, 'data')  # output directory for the PerformanceMetrics object
     log_dir = os.path.join(prefix, 'log')      
@@ -434,7 +434,7 @@ class PerformanceMetrics(Metrics): # or PerformanceComparison
             else: 
                 raise ValueError("Method %s already exist!" % method)
     def add_and_eval(self, labels, predictions, method):
-        metrics = scores(labels, predictions, metrics=PerformanceMetrics.tracked)
+        metrics = evaluate_metrics(labels, predictions, metrics=PerformanceMetrics.tracked)
         self.add(metrics, method=method, overwrite_=True) 
         return
 
@@ -1433,7 +1433,7 @@ def analyzeBasePerf(L_test, T, U=None, **kargs):
         predictions = T[i, :]   # a particular user/classifier
         labels = L_test 
 
-        mdict = scores(labels, predictions, metrics=metrics) # compute all (tracked) performance at once
+        mdict = evaluate_metrics(labels, predictions, metrics=metrics) # compute all (tracked) performance at once
         # sorted(mdict, key=mdic.__getitem__, reverse=True)  # sort metric according to its score 
         
         # add column by column (each method is a column in this performance metrics dataframe)
@@ -1570,7 +1570,7 @@ def generate_mock_data(shape=(5, 5), p_th=[]):
     def the_other(l):
         return 1 - l
     # test function for other subroutines (e.g. analyzePerf())
-    from utils_cf import estimateLabels
+    import utils_cf as uc
 
     Z = np.zeros(shape) 
     nu, ni = Z.shape[0], Z.shape[1]
@@ -1579,10 +1579,14 @@ def generate_mock_data(shape=(5, 5), p_th=[]):
         Z[i, :] = np.random.uniform(0, 1, ni)
 
     # simulate labels
-    if not p_th: 
-        p_th = [0.5, ] * nu
+    if not p_th: p_th = 0.5
+    if isinstance(p_th, float):
+        p_th = [p_th, ] * nu
+    else: 
+        if len(p_th) != nu: 
+            raise ValueError(f"Number of probability thresholds should equal the number of users/BPs. N(p_th): {len(p_th)} != {nu}")
 
-    L = estimateLabels(Z, p_th=p_th, L=[], pos_label=1, neg_label=0)
+    L = uc.estimateLabels(Z, p_th=p_th, L=[], pos_label=1, neg_label=0)
     uL = np.unique(L)
     if len(uL) < 2: 
         ith = np.random.choice(range(ni), 1)[0]
@@ -1612,7 +1616,7 @@ def generate_mock_data(shape=(5, 5), p_th=[]):
 #     y_mean = uc.combiner(T, aggregate_func=np.mean)
 #     y_mean_h = uc.combiner(Th, aggregate_func=np.mean)
     
-#     scores(labels, predictions, **kargs)
+#     evaluate_metrics(labels, predictions, **kargs)
 
 #     return
 
@@ -1666,23 +1670,16 @@ def compareEstimates(L_test, Ts, **kargs):
     U: users
     method: 
     """
-    def eval_entry(y_actual, y_hat):   # [todo]
-        TP = FP = TN = FN = 0
-        for i in range(len(y_hat)): 
-            if y_actual[i]==y_hat[i]==1:
-                TP += 1
-            if y_hat[i]==1 and y_actual[i]!=y_hat[i]:
-                FP += 1
-            if y_actual[i]==y_hat[i]==0:
-                TN += 1
-            if y_hat[i]==0 and y_actual[i]!=y_hat[i]:
-                FN += 1
-
+    def eval_entry(y_true, y_pred):   # [todo]
+        TP = np.sum((y_pred == pos_label) & (y_true == y_pred))
+        TN = np.sum((y_pred == neg_label) & (y_true == y_pred))
+        FP = np.sum((y_pred == pos_label) & (y_true != y_pred))
+        FN = np.sum((y_pred == neg_label) & (y_true != y_pred))
         return {'TP': TP, 'FP': FP, 'TN': TN, 'FN': FN}
-    def to_label(y_hat, p_threshould=0.5): 
+    def to_label(y_hat, p_threshold=0.5): 
         labels = np.zeros(len(y_hat))
         for i, p in enumerate(y_hat): 
-            if p >= p_threshould: 
+            if p >= p_threshold: 
                labels[i] = 1
         return list(labels)
     def report(T_d, Th_d, metrics, greater_is_better=True, method='?', log=False):  
@@ -1707,6 +1704,9 @@ def compareEstimates(L_test, Ts, **kargs):
                 msg += '... T (%s: %f) > Th (%f; %s)\n' % (metric, score, Th_d[metric], method) 
             div(msg, symbol='*', border=2)
         return
+
+    pos_label = kargs.get('pos_label', 1)
+    neg_label = kargs.get('neg_label', 0)
 
     # todo
     # base_perf = analyzeBasePerf(L_test, T, U, **kargs)
@@ -1733,9 +1733,9 @@ def compareEstimates(L_test, Ts, **kargs):
         ut = random.choice(range(n_users))
         for u in range(n_users): 
             t, th = T[u, :], Th[u, :]
-            mdict = scores(L_test, t, **kargs)  # mdict: metric -> score
+            mdict = evaluate_metrics(L_test, t, **kargs)  # mdict: metric -> score
             estT.add(mdict)  # add scores user by user
-            mdict = scores(L_test, th, **kargs)
+            mdict = evaluate_metrics(L_test, th, **kargs)
             estTh.add(mdict)
             # if u == ut: print('(compareEstimates) Test | user #%d estT:\n%s\n... estTh:\n%s\n' % (ut, estT.records, estTh.records))
         T_d = estT.apply(op=np.mean); # print('... T_d:\n%s\n' % T_d)
@@ -1751,14 +1751,14 @@ def compareEstimates(L_test, Ts, **kargs):
         ut = random.choice(range(n_users))
         for u in range(n_users): 
             t, th = T[u, :], Th[u, :]
-            # yhat_t = to_label(L_test, t, p_threshould=p_th)
-            # yhat_th = to_label(L_test, th, p_threshould=p_th)
+            # yhat_t = to_label(L_test, t, p_threshold=p_th)
+            # yhat_th = to_label(L_test, th, p_threshold=p_th)
             # entries_t = eval_entry(L_test, yhat_t)
             # entries_th = eval_entry(L_test, yhat_th)
 
             # update
-            estT.add(eval_entry(L_test, to_label(t, p_threshould=p_th)))
-            estTh.add(eval_entry(L_test, to_label(th, p_threshould=p_th)))
+            estT.add(eval_entry(L_test, to_label(t, p_threshold=p_th)))
+            estTh.add(eval_entry(L_test, to_label(th, p_threshold=p_th)))
             # if u == ut: print('(compareEstimates) Test | user #%d estT:\n%s\n... estTh:\n%s\n' % (ut, estT.records, estTh.records))
 
         # print('(test 1.5) estT:\n%s\n' % estT.records)
@@ -1779,7 +1779,7 @@ def evalTestSetViaPreference(labels, Th, T, **kargs):
     # predictions = uc.combiner(Th, aggregate_func='pref', T=T)
     predictions = uc.combiner_pref(Th, T)
 
-    metrics = scores(labels, predictions, **kargs)
+    metrics = evaluate_metrics(labels, predictions, **kargs)
 
     # metrics['auc'] = common.score(labels, predictions)
     print('... auc: %f' % metrics['auc'])
@@ -1804,28 +1804,107 @@ def fit_model(X, Y, model=None):
     return model
 
 
-def calculate_metrics_given_predictions(y_true, y_pred, y_pred_label, verbose=0):
+def calculate_all_metrics(y_true, y_pred, p_th=0.5, **kargs):
+    """
 
+    Related 
+    -------
+    a. getPerformanceScores()
+    """
     # Performance measures via probability predicitons
-    metrics_scores = getPerformanceScores(y_true, y_pred)
-    # if verbose: print(metrics_scores) # E.g. ['auc', 'fmax', 'fmax_negative', 'sensitivity', 'specificity', 'brier']
+    metrics_scores = calculate_proba_metrics(y_true, y_pred, **kargs)
+    
+    # Convert probability predictions to labels
+    y_pred_label = (y_pred >= p_th).astype(int)
     
     # Performance measures via label predictions
-    metrics_labels = calculate_metrics_given_labels(y_true, y_pred_label)
+    metrics_labels = calculate_label_metrics(y_true, y_pred_label, **kargs)
     
     return metrics_scores, metrics_labels
 
+def calculate_proba_metrics(y_true, y_score, **kargs): 
+    """
 
-def calculate_metrics_given_labels(y_true, y_pred): 
-    from sklearn.metrics import accuracy_score, roc_auc_score, precision_score, recall_score, f1_score
+    Related
+    -------
+    1. use evaluate() to evaluate individual metric 
+    """
+    from sklearn import metrics 
+    import utils_classifier as uclf
+
+    metrics_table = {}
+    tracked_metrics = kargs.get('metrics', Metrics.tracked) 
+    verbose = kargs.get('verbose', 0)
+    
+    # AUC
+    metrics_table['auc'] = metrics.roc_auc_score(y_true, y_score)
+
+    # Fmax 
+    beta = kargs.get('beta', 1.0)
+    pos_label = kargs.get('pos_label', 1)
+    metrics_table['fmax'] = uclf.fmax_score(y_true, y_score, beta = beta, pos_label = pos_label)
+        
+    # Fmax Negative
+    metrics_table['fmax_negative'] = uclf.fmax_score(y_true, y_score, beta = beta, pos_label = 1 - pos_label)
+
+    # Brier loss (smaller is better)
+    metrics_table['brier_loss'] = metrics.brier_score_loss(y_true, y_score)
+
+    # Brier skill score (larger is better)
+    brier_ref = kargs.get('brier_ref', None)
+    metrics_table['brier_score'] = metrics_table['brier'] = brier_skill_score(y_true, y_score, brier_ref=brier_ref)
+
+    # Log loss (smaller is better)
+    metrics_table['log'] = metrics_table['log_loss'] = metrics.log_loss(y_true, y_score)
+
+    # [todo] Add other metrics here
+
+    if verbose > 1: 
+        print("[help] Available performance measures:")
+        for k, v in metrics_table.items(): 
+            if not tracked_metrics or (k in tracked_metrics): 
+                print(f'  - {k}: {v}')
+
+    return metrics_table
+
+def calculate_label_metrics(y_true, y_pred, **kargs): 
+    from sklearn.metrics import accuracy_score, roc_auc_score, precision_score, recall_score, f1_score, balanced_accuracy_score
+
+    if len(np.unique(y_pred)) > 2: 
+        # ys = np.random.choice(y_pred, 5)
+        p_threshold = kargs.get('p_threshold', None)
+        if isinstance(p_threshold, float):
+            y_pred = (y_pred >= p_threshold).astype(int)
+        else: 
+            msg = f"(calculate_label_metrics) `y_pred` must be a vector of label predictions but given probabilities without a valid threshold."
+            raise ValueError(msg) 
+            
+    verbose = kargs.get('verbose', 0)
+    tracked_metrics = kargs.get('metrics', Metrics.tracked) 
+
     metrics = {}
     metrics['acc'] = metrics['accuracy'] = accuracy_score(y_true, y_pred)
+    metrics['balanced'] = metrics['balanced_acc'] = balanced_accuracy_score(y_true, y_pred)
     metrics['precision'] = precision_score(y_true, y_pred)
     metrics['recall'] = recall_score(y_true, y_pred)
     metrics['f1'] = f1_score(y_true, y_pred)
 
-    # other measures ... 
+    # Find another set of metrics (with alternative names)
+    # NOTE: Remeber to specify a threshold in order to convert probabilities to crips class labels
+    metrics2 = analyze_precision_recall(y_true, y_pred, **kargs)
 
+    # [test]
+    # assert np.allclose(metrics2['precision'], metrics['precision']), f"{metrics2['precision']} =! {metrics['precision']}"
+    # assert np.allclose(metrics2['recall'], metrics['recall']), f"{metrics2['recall']} =! {metrics['recall']}"
+    # NOTE: precision, recall, etc. from `analyze_precision_recall()` may be slightly different (nonetheless inconsequential) to avoid division-by-zero errors
+
+    metrics.update(metrics2)
+
+    if verbose > 1: 
+        print("[help] Available label-specific performance measures:")
+        for k, v in metrics.items(): 
+            if not tracked_metrics or (k in tracked_metrics): 
+                print(f'  - {k}: {v}')
     return metrics
 
 def calculate_metrics(model, X_test, Y_test):
@@ -1911,6 +1990,9 @@ def eval_performance(T, labels, **kargs):
         metrics = M.aggregate() # take the average
 
     return metrics, predictions
+# [alias]
+def evaluate_rating_matrix(T, labels, **kargs): 
+    return eval_performance(T, labels, **kargs)
 
 # evaluate
 def evalTestSet(labels, Th, **kargs): # labels: true labels, Th: estimates, T: 'true' rating matrix
@@ -1952,7 +2034,7 @@ def evalTestSet(labels, Th, **kargs): # labels: true labels, Th: estimates, T: '
     title_msg = '(evalTestSet) Fold=%d, n_samples=%d' % (kargs['fold'], nL) if 'fold' in kargs else '(evalTestSet) performance evaluation (n_samples=%d)' % nL
     print( title_msg )
 
-    metrics = scores(labels, predictions, **kargs)
+    metrics = evaluate_metrics(labels, predictions, **kargs)
 
     # metrics['auc'] = common.score(labels, predictions)
     print('... auc: %f' % metrics['auc'])
@@ -2509,14 +2591,25 @@ def fmax_score(labels, predictions, beta = 1.0, pos_label = 1):
         Radivojac, P. et al. (2013). A Large-Scale Evaluation of Computational Protein Function Prediction. Nature Methods, 10(3), 221-227.
         Manning, C. D. et al. (2008). Evaluation in Information Retrieval. In Introduction to Information Retrieval. Cambridge University Press.
     """
-    import sklearn.metrics as skmetrics
-    # from numpy import nanmax
+    import utils_classifier as uclf
+    return uclf.fmax_score(labels, predictions, beta=beta, pos_label=pos_label)
 
-    precision, recall, _ = skmetrics.precision_recall_curve(labels, predictions, pos_label=pos_label)
-    f1 = (1 + beta**2) * (precision * recall) / ((beta**2 * precision) + recall + 0.0)  # log: invalid value encountered in true_divide
-    return np.nanmax(f1)
+# calculate the brier skill score
+def brier_skill_score(y, yhat, brier_ref=None, pos_label=1):
+    from sklearn import metrics
 
-def score(y_true, y_score, metric='auc', **kargs):
+    if brier_ref is None: 
+        # Use a no-skill classifier as a reference that predicts P(y=1|x) to be the ratio of positive examples
+        r_pos = np.sum(yhat == pos_label)/len(yhat)
+        probabilities = [r_pos for _ in range(len(yhat))]
+        brier_ref = metrics.brier_score_loss(y, probabilities)
+
+    # calculate the brier score
+    bs = metrics.brier_score_loss(y, yhat)
+    # calculate skill score
+    return 1.0 - (bs / brier_ref)
+
+def evaluate(y_true, y_score, scoring='fmax', **kargs):
     """
 
     Reference
@@ -2525,93 +2618,125 @@ def score(y_true, y_score, metric='auc', **kargs):
            https://scikit-learn.org/stable/modules/model_evaluation.html
 
     """
-    import sklearn.metrics as skmetrics 
-    
-    if metric == 'auc': 
-        return skmetrics.roc_auc_score(y_true, y_score)
-    elif metric == 'fmax': 
-        return fmax_score(y_true, y_score, beta = 1.0, pos_label = kargs.get('pos_label', 1))
-    elif metric == 'fmax_negative': 
-        return fmax_score(y_true, y_score, beta = 1.0, pos_label = 0)
-    elif metric.startswith('brier'):
-        loss = skmetrics.brier_score_loss(y_true, y_score)
-        # convert to confidence for convenience (i.e. the greater the better)
-        return 1.-loss
+    from sklearn import metrics 
+    import utils_classifier as uclf
+
+    if isinstance(scoring, str):
+        if scoring.lower() == 'auc': 
+            return metrics.roc_auc_score(y_true, y_score)
+
+        elif scoring.lower() == 'fmax': 
+            beta = kargs.get('beta', 1.0)
+            pos_label = kargs.get('pos_label', 1)
+            return uclf.fmax_score(y_true, y_score, beta = beta, pos_label = pos_label)
+        
+        elif scoring.lower() == 'fmax_negative': 
+            beta = kargs.get('beta', 1.0)
+            pos_label = kargs.get('pos_label', 1)
+            return uclf.fmax_score(y_true, y_score, beta = beta, pos_label = 1 - pos_label)
+
+        elif scoring.lower() in ('log_loss', 'log', ): # log loss
+            return metrics.log_loss(y_true, y_score)
+        
+        elif scoring.lower() in ( 'brier_loss', ):
+            loss = metrics.brier_score_loss(y_true, y_score)
+            return loss # 1.-loss # convert to confidence for convenience (i.e. the greater the better)? 
+
+        elif scoring.lower() in ('brier', 'brier_score', ): # Brier skill score
+            brier_ref = kargs.get('brier_ref', None)
+            return brier_skill_score(y_true, y_score, brier_ref=brier_ref)
+
+        else: 
+            # Try label-specific performance metrics, in which case we need to convert the probability predictions
+            # into crisp class labels using an appropriate probability threshold
+
+            try: 
+                # sensitivity, specificity, etc. given probability threshold
+                p_threshold = kargs.get('p_threshold', None)
+                if p_threshold is None: 
+                    beta = kargs.get('beta', 1.0)
+                    fmax, pth_fmax = uclf.fmax_score_threshold(y_true, y_score, beta = beta, pos_label = 1)
+                    p_threshold = pth_fmax
+
+                # Convert the probabilities into class labels
+                y_pred = (y_score >= p_threshold).astype(int)
+                labeling_metrics = calculate_label_metrics(y_true, y_pred)
+                # print(labeling_metrics)
+                if scoring in labeling_metrics: 
+                    return labeling_metrics[scoring]
+                else: 
+                    raise ValueError(f"Could not find the target metric: {scoring} among available label-specific metrics:\n{labeling_metrics}\n")
+            except Exception as e: 
+                msg = "[evaluation] Unknown metric: %s (error: %s)" % (scoring, e)
+                raise NotImplementedError(msg)
     else: 
+        msg = "[evaluation] Invalid scoring function: %s" % scoring
+        
         # user provided scoring function
-        scoring = kargs.get('scoring', None)
         if hasattr(scoring, '__call__'): 
             return scoring(y_true, y_score)
         else: 
-            # sensitivity, specificity, 
-            metrics = perf_measures(y_true, y_score, p_threshould=kargs.get('p_threshould', 0.5))
-            if metric in metrics: 
-                return metrics[metric]
-
-    msg = "Unknown metric: %s" % metric
+            raise ValueError(msg)
+    msg = "[evaluation] Invalid input metric or scoring function: %s" % scoring
     raise ValueError(msg)
 
-def getPerformanceScores(y_true, y_score, **kargs):
+# [alias]
+def score(y_true, y_score, metric='auc', **kargs):
+    return evaluate(y_true, y_score, metric=metric, **kargs)
+
+def getPerformanceScores(y_true, y_score, metrics=[], **kargs):
     # kargs
     #   metrics 
     #   exception_
     #   p_threshold
-    def eval_metrics(metrics, y_true, y_score):
+    def eval_metrics(y_true, y_score, metrics):
         table = {}
         for metric in metrics: 
             try: 
-                table[metric] = score(y_true, y_score, metric=metric)  # fmax, auc, etc.
+                table[metric] = evaluate(y_true, y_score, scoring=metric)  # fmax, auc, etc.
             except Exception as e:
-                msg = "(getPerformanceScores) metric={metric} > {error}\n... y_true:{label}\n... y_score:{prediction}\n".format(metric=metric, 
+                msg = "(getPerformanceScores) Error evaluting metric={metric}:\n{error}\n\n... y_true:{label}\n... y_score:{prediction}\n".format(metric=metric, 
                     error=e, label=y_true[:100], prediction=y_score[:100])
                 if kargs.get('exception_', True): 
                     raise RuntimeError(msg)
                 else: 
                     y_score = np.nan_to_num(y_score, nan=0.0)
-                    table[metric] = score(y_true, y_score, metric=metric)  # fmax, auc, etc.
+                    table[metric] = evaluate(y_true, y_score, scoring=metric)  # fmax, auc, etc.
                     print(msg)
                     # table[metric] = -1
         return table
-    import common
+    import utils_classifier as uclf
 
+    # Parameters
+    # a. metrics parameters E.g. ['auc', 'fmax', 'fmax_negative', 'sensitivity', 'specificity', 'brier']
+    if not metrics: metrics = Metrics.tracked
+    # b. misc parameters
+    verbose = kargs.get('verbose', 0)
+
+    # Check for `y_score` which is expected to be probability scores (not labels)
     y_score_uniq = np.unique(y_score)
     if len(y_score_uniq) <= 2: 
-        print(f"[evaluation] Warning: `y_score` may be labels while probabilities are expected: {y_score_uniq}")
+        print(f"[evaluation] Warning: `y_score` may be class labels while probabilities are expected: {y_score_uniq}")
 
-    metrics = kargs.get('metrics', Metrics.tracked) # E.g. ['auc', 'fmax', 'fmax_negative', 'sensitivity', 'specificity', 'brier']
-    metric_table = eval_metrics(metrics, y_true, y_score)  # not all metric is defined in score()
+    # A. Performance measures on probability predictions
+    metric_table = eval_metrics(y_true, y_score, metrics)  # not all metric is defined in score()
 
-    # print('... (verify) got scores for metrics (via eval_metrics()): {metrics}'.format(metrics=list(metric_table.keys())))
-
-    fmax, pth_fmax = common.fmax_score_threshold(y_true, y_score, beta = 1.0, pos_label = 1)
-
-    # precision recall analysis
-    metric_table.update( analyze_precision_recall(y_true, y_score, p_threshold=kargs.get('p_threshold', pth_fmax)) )
+    # B. Performance measures on label predictions
+    p_threshold = kargs.get('p_threshold', None) # Used for label predictions
+    if p_threshold is None: 
+        if verbose: print("[evaluate] No probability threshold provided; use `fmax` threshold by default ...")
+        beta = kargs.get('beta', 1.0)
+        fmax, pth_fmax = uclf.fmax_score_threshold(y_true, y_score, beta=beta, pos_label = 1)
+        p_threshold = pth_fmax
+    if verbose: print(f"[evaluate] Evaluting label predictions at threshold={p_threshold}")
+    y_pred_label = (y_score >= p_threshold).astype(int)
+    
+    metric_table.update( calculate_label_metrics(y_true, y_pred_label) )
     
     return metric_table
 
-def scores(y_true, y_score, **kargs): 
-    def run_test(metric):
-        try: 
-            metric_table[metric] = score(y_true, y_score, metric=metric)
-        except Exception as e:
-            msg = "(scores) metric={metric} > {error}\n... y_true:{label}\n... y_score:{prediction}\n".format(metric=metric, 
-                error=e, label=y_true[:100], prediction=y_score[:100])
-            if kargs.get('exception_', True): 
-                raise RuntimeError(msg)
-            else: 
-                print(msg)
-                metric_table[metric] = -1
-
-    metrics = kargs.get('metrics', Metrics.tracked)
-
-    # sensitivity, specificity, ... that depend on probability threshold
-    metric_table = perf_measures(y_true, y_score, p_threshold=kargs.get('p_threshold', 0.5))
-    for metric in metrics: 
-        if not metric in metric_table: 
-            # metric_table[metric] = score(y_true, y_score, metric=metric)
-            run_test(metric)
-    return metric_table
+def evaluate_metrics(y_true, y_score, **kargs): 
+    return getPerformanceScores(y_true, y_score, **kargs)
 
 def analyze_precision_recall(y_true, y_score, **kargs):
     """
@@ -2623,18 +2748,11 @@ def analyze_precision_recall(y_true, y_score, **kargs):
     confusion_matrix: assuming that confusion_matrix is a dataframe 
 
     """
-    def eval_entry(y_actual, y_hat):   # [todo]
-        TP = FP = TN = FN = 0
-        for i in range(len(y_hat)): 
-            if y_actual[i]==y_hat[i]==1:
-                TP += 1
-            if y_hat[i]==1 and y_actual[i]!=y_hat[i]:
-                FP += 1
-            if y_actual[i]==y_hat[i]==0:
-                TN += 1
-            if y_hat[i]==0 and y_actual[i]!=y_hat[i]:
-                FN += 1
-
+    def eval_entry(y_true, y_pred):   # [todo]
+        TP = np.sum((y_pred == pos_label) & (y_true == y_pred))
+        TN = np.sum((y_pred == neg_label) & (y_true == y_pred))
+        FP = np.sum((y_pred == pos_label) & (y_true != y_pred))
+        FN = np.sum((y_pred == neg_label) & (y_true != y_pred))
         return (TP, FP, TN, FN)
 
     from sklearn.metrics import confusion_matrix
@@ -2654,6 +2772,9 @@ def analyze_precision_recall(y_true, y_score, **kargs):
     # FN = cm.sum(axis=1) - np.diag(cm)
     # TP = np.diag(cm)
     # TN = cm.sum() - (FP + FN + TP)  # remove values for numpy array
+    
+    pos_label = kargs.get('pos_label', 1)
+    neg_label = kargs.get('neg_lable', 0)
 
     TP, FP, TN, FN = eval_entry(y_true, y_pred)
 
@@ -2693,13 +2814,18 @@ def analyze_precision_recall(y_true, y_score, **kargs):
     metrics['accuracy'] = ACC
 
     return metrics
-#######################
+##############################################
 # alias 
 perf_measures = analyze_precision_recall
 ##############################################
 
-def perf_measures2(entries, ep=1e-9): 
+def performance_measure_given_counts(adict, ep=1e-9, codes={}): 
+    entries = adict
     TP, FP, TN, FN = entries['TP'], entries['FP'], entries['TN'], entries['FN']
+    TP = entries.get('TP', codes.get('TP', 2))
+    TN = entries.get('TN', codes.get('TN', 1))
+    FP = entries.get('FP', codes.get('FP', -2))
+    FN = entries.get('FN', codes.get('FN', -1))
 
     metrics = {}
     # print('... nTP: %s, nTN: %s, nFP: %s, nFN: %s' % (TP, TN, FP, FN))
@@ -2737,6 +2863,11 @@ def perf_measures2(entries, ep=1e-9):
     metrics['accuracy'] = ACC
 
     return metrics
+##############################################
+# [alias]
+def perf_measures2(adict, ep=1e-9, codes={}):
+    return performance_measure_given_counts(adict, ep, codes)
+##############################################
 
 def plot_roc(cv_data, **kargs):
     """
@@ -2951,7 +3082,7 @@ def runENetStacker(n_classifiers=5, n_bags=10, seed=0, fold=0, per_fold=True):
     
     return
 
-def t_metrics(): 
+def demo_metric_constructs(): 
     import numpy as np
     
     M = Metrics(op=np.mean)
@@ -2990,38 +3121,39 @@ def t_metrics():
     for k, v in Mp.items():
         print('[key=%s] %s' % (k, v)) 
     
-
     return
 
-def t_performance_metrics(**kargs):
-    def tune(L, Th, p_th=0.5, ep=0.01):
+def demo_performance_metrics(**kargs):
+    def tune_ratings_with_labels(L, Th, p_th=0.5, ep=0.01):
         for i in range(Th.shape[0]):
             # foreach row in Th, wherever L==1, set the proba to a reasonable value
-            Th[i, np.where(L==1)] = np.random.uniform(p_th+ep, 1.0-ep, sum(L==1))
+            Th[i, np.where(L==1)] = np.random.uniform(p_th+ep, 1.0, np.sum(L==1))
         return Th 
 
     from tabulate import tabulate
     from utils_cf import MFEnsemble
     from analyze_performance import Analysis
+    import combiner
     np.set_printoptions(precision=3)
 
-    domain = 'dummy'
+    domain = ''
     Analysis.config(domain=domain)
     project_path = Analysis.project_path
+    print(f"[test] Project path: {project_path}")
     analysis_path = Analysis.analysis_path
     # if not os.path.exists(project_path): 
     #     os.mkdir(project_path)
     # if not os.path.exists(analysis_path): 
     #     os.mkdir(analysis_path)
 
-    dim = (10, 5)
+    dim = (10, 100)
     ###################################
     params = {'n_factors': 100, 'alpha': 100, 'conf_measure': 'brier', 'setting': 3}
     method_id = MFEnsemble.get_method_id(method='wmf', kind='als', params=params)
     # 'dummy_regression'
     ###################################
 
-    n_cycles = 10
+    n_cycles = 3
     t = np.random.choice(n_cycles, 1)[0]
     for i in range(n_cycles): 
         T, L = generate_mock_data(dim, p_th=[])
@@ -3030,7 +3162,7 @@ def t_performance_metrics(**kargs):
         ########################################
         # perfect Th assuming p_th = 0.5
         Th2, _ = generate_mock_data(dim, p_th=[])
-        tune(L, Th2)
+        tune_ratings_with_labels(L, Th2)
         ########################################
 
         # print('> T:\n{T}\n> L:\n{L}\n------'.format(T=T, L=L))
@@ -3042,7 +3174,24 @@ def t_performance_metrics(**kargs):
         div("Do we always see positive increments between score and score_h if Th is 'perfect'? ")  # ... ok
         perf2, pv2 = analyzePerf(L, Th=Th2, T=T, method=method_id, aggregate_func=np.mean, fold=i, 
                     save=False, analysis_path=analysis_path) # True if i == t else False
-        print('> Cycle {c} | perf2:\n{t}\n'.format(c=i, t=tabulate(perf.table, headers='keys', tablefmt='psql')))
+        print('> Cycle {c} | perf2:\n{t}\n'.format(c=i, t=tabulate(perf2.table, headers='keys', tablefmt='psql')))
+
+        # [observations] 'fmax_negative' and 'brier' may not change much
+
+    p_th = 0.5
+    T, L = generate_mock_data(dim, p_th=p_th)
+    y_true = L
+    y_pred = combiner.combine(T, aggregate_func='mean')
+    lh = (y_pred >= p_th).astype(int)
+
+    # Introduce random noise
+    n_perturbed = min(3, len(lh))
+    pos_perturbed = np.random.choice(range(len(lh)), n_perturbed)
+    lh[pos_perturbed] = np.random.choice([0, 1], n_perturbed)
+
+    print(f"> y_true:\n{y_true}\n")
+    print(f"> y_pred (p_th={p_th}):\n{y_pred}\n")
+    metrics = calculate_all_metrics(y_true, lh, verbose=2)
 
     return 
 
@@ -3054,10 +3203,10 @@ def test():
     #         runENetStacker(n_classifiers=5, n_bags=10, seed=0, fold=fold, per_fold=per_fold)
 
     # class Metrics 
-    # t_metrics()
+    # demo_metric_constructs()
 
     # performance metrics and class PerformanceMetrics
-    t_performance_metrics()
+    demo_performance_metrics()
 
     return
 

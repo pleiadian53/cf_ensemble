@@ -5067,7 +5067,7 @@ def wmf_ensemble_iter2(data, params, hyperparams={}, indices=[], vars=['wmfCV', 
         print('(wmf_ensemble_iter2) pref_threshold given? {}'.format(True if pref_threshold > 0.0 else False))
 
         lhx = L  # L is a concatenation of training set labels and estimated test set labels 
-        MhX, Lhx = uc.probability_filter(X, lhx, p_threshold)  # Lh_X(X, p_threshould)
+        MhX, Lhx = uc.probability_filter(X, lhx, p_threshold)  # Lh_X(X, p_threshold)
 
         if pref_threshold > 0.0: 
             Xh = uc.binarize_pref(Xh, p_th=pref_threshold, cutoff=True)

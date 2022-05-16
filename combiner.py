@@ -83,7 +83,8 @@ def mask_given_filter(X, P, mask_value=0, replace_by='mean', axis=0, exception=T
             P = pmodel.to_hard_filter(P, r_th, n_codes_ref=None, dtype='int', inplace=False)
             # P = softmax(P, axis=axis) # softmax helps to ensure that P no degenerative cases and that all weights sum to 1
 
-    # [condition] pmodel.is_hard_filter(P) == True
+    # Condition:
+    # assert pmodel.is_hard_filter(P) == True
 
     n_masked = collections.Counter(np.unique(P)).get(mask_value, 0)
 
@@ -95,7 +96,7 @@ def mask_given_filter(X, P, mask_value=0, replace_by='mean', axis=0, exception=T
             if axis == 0:
                 for j in range(P.shape[1]):
                     x = X[:, j] # column vector
-                    p = P[:, j]
+                    p = P[:, j] # column mask
                     v = np.mean(x[p != mask_value]) # take the mean where X isn't masked
                     x[p == mask_value] = v # replace idiom: array[condition]=value
             else:
@@ -113,23 +114,74 @@ def mask_given_filter(X, P, mask_value=0, replace_by='mean', axis=0, exception=T
     return X # default: no-op
 
 
+def predict_labels_with_reliable_entries(y_pred, *, R, L_train, p_threshold,
+            aggregate_func='mean', policy_threshold='balanced', axis=0, **kargs):
+
+    pos_label = kargs.get('pos_label')
+    neg_label = kargs.get('neg_label')
+
+    # First, use the training set to determine a proper threshold given `policy_threshold` (e.g. the one that maximizes "balanced accuracy")
+    p_th = estimate_threshold_with_reliable_entries(R, L_train, p_threshold,
+                                                                                                aggregate_func=aggregate_func,
+                                                                                                    policy_threshold=policy_threshold,
+                                                                                                    pos_label=pos_label,
+                                                                                                    axis=axis)
+
+    lh = np.zeros(len(y_pred), dtype='int')
+    lh[y_pred >= p_th] = pos_label
+    lh[y_pred < p_th] = neg_label
+
+    return lh
+
+def estimate_threshold_with_reliable_entries(R, L_train,
+            p_threshold,
+            aggregate_func='mean',
+            policy_threshold='balanced',
+            pos_label=1,
+            axis=0):
+    """
+    Estimate the (combined) probability threshold based on the knowledge of "reliability of ratings".
+
+    Parameters
+    ----------
+    p_threshold: the original BP probability thresholds (estimated to optimize a given performance metric)
+                 see utils_cf.estimateProbThresholds()
+
+
+    """
+    Pr_true, Lh = pmodel.probability_filter(R, L_train, p_threshold)
+
+    # Reduce the probability matrix into a prediction vector given the probability filter (aka mask)
+    y_pred_train = combine_given_filter(R, Pr_true, aggregate_func=aggregate_func, axis=axis)
+
+    # NOTE: If the aggregation function is a mean function, then this probability vector is determined
+    #       ONLY by the average of the reliable entries in `R` (while ignoring unreliable entries)
+
+    thresholds = uc.estimateProbThresholds(y_pred_train, L=L_train, pos_label=pos_label, policy=policy_threshold)
+    assert len(thresholds) == 1
+
+    return thresholds[0]
+
 def combine_given_filter(X, P, aggregate_func='mean', axis=0, **kargs):
     """
     A specialized combine function.
 
     For a more general combine function, see `combine()`.
     """
+    verbose = kargs.get('verbose', 0)
     if X.shape != P.shape:
         raise ValueError(f"shape(X): {X.shape} != shape(P): {P.shape}")
     if sparse.issparse(P): P = P.A
 
     predictions = np.zeros(X.shape[1])
     if pmodel.is_hard_filter(P):
+        if verbose: print(f"[combine] `P` is a hard filter with values: {np.unique(P)}")
         predictions = uc.predict_by_importance_weights(X, P, aggregate_func=aggregate_func, fallback_on_low_weight=False)
         # Note: it's okay for `P` to be degenerative (having column- or row-wise filter values equal to 0)
     else: # P is a soft filter, where P[i,j] is a continous value between [0, 1]
         # if np.max(P) > 1.0:
         #       raise ValueError(f"The filter P's entries must be in [0, 1]; observed min(P): {np.min(P)}, max(P): {np.max(P)}")
+        if verbose: print(f"[combine] `P` is a soft filter.")
 
         # Normalize P such that X * P can be used to compute weighted average with higher X[i, j] having higher weights
         P = softmax(P, axis=axis) # softmax helps to ensure that P no degenerative cases and that all weights sum to 1

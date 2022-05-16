@@ -473,6 +473,50 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
     have been pre-computed externally and are provided as inputs. 
 
     """
+    def name_entry(base, method, sep='+'):
+        mtype, ptype = method.split(sep)
+
+        if mtype == 'old':
+            return base 
+        else: 
+            # mtype: 'new'
+            if ptype == 'p_th': 
+                return "{}_{}".format(base, mtype)
+            elif ptype == 'p_th2': 
+                return "{}_{}_{}".format(base, mtype, 'calibrated')
+        return base
+
+    def display(rec, method='predict_by_filter', 
+                    metrics=['balanced_acc', 'f1', 'auc'], 
+                    msg=""): 
+        msg += f"> Method={method}:\n"
+        p_th = rec.get('p_threshold', 'n/a')
+        msg += f"... p_th: {p_th}\n"
+        for metric in metrics: 
+            msg += f"... {metric}: {rec.get(metric, '?')}\n"
+        print(msg)
+        return msg
+
+    def calculate_ranking(metric_to_methods, msg=""): 
+        metric_to_methods_sorted = {}
+        for metric, method_scores, in metric_to_methods.items():
+            greater_is_better = False if metric.lower().find('loss') >= 0 else True
+            
+            # For each metric, rank the prediction methods
+            ranking = sorted([(method, score) for method, score in method_scores if score != '?'], key=lambda x: x[1], reverse=greater_is_better)
+            metric_to_methods_sorted[metric] = ranking
+
+            msg += f"> Metric={metric}\n"
+            for i, (method, score) in enumerate(ranking): 
+                if i == 0: 
+                    msg += f"{method} ({score})"
+                else: 
+                    msg += ' > ' + f'{method} ({score})'
+            msg += '\n\n'
+            
+        print(msg)
+        return metric_to_methods_sorted
+        
     # `train`, `test` and `meta` are namedtuples:
     # train: R, L_train 
     # test:  T, L_test 
@@ -481,28 +525,48 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
     import data_pipeline as dp
     import utils_cf as uc
     import utils_classifier as uclf
+    import combiner
+    import evaluate as ev
     from scipy.spatial import distance
 
     # Optional Parameters 
     # -------------------
     verbose = kargs.get('verbose', 1)
+    pos_label = kargs.get('pos_label', 1)
+    neg_label = kargs.get('neg_label', 0)
+    include_stacking= kargs.get('include_stacking', False) 
+    target_metrics = kargs.get('metrics', ['balanced_acc', 'f1', 'brier', 'log_loss', 'auc'])
 
-    reestimated = {}
+    results = {} # <<< collect results here
     scores = []
 
-    # Original data
+    # Configurations  # [todo] use a configuration file
+    parameters = [
+
+    # algorithm parameters
+    'policy_threshold', 'conf_measure', 'alpha', 'n_factors', 
+    
+    # data-specific parameters (parameters that depend on the data)
+    'p_threshold', 'p_threshold2', 'p_threshold_new', 
+    
+    ] 
+    
+    # Inputs
+    ###################################################
     R, Rh, L_train = train.X, train.Xh, train.L # [add] train.Pc
     T, Th, L_test = test.X, test.Xh, test.L # [add] test.Pc
-    policy_threshold = meta.policy_threshold
-    conf_measure = meta.conf_measure
-    alpha = meta.alpha
-    n_factors = meta.n_factors
+    results['policy_threshold'] = policy_threshold = meta.policy_threshold
+    results['conf_measure'] = conf_measure = meta.conf_measure
+    results['alpha'] = alpha = meta.alpha
+    results['n_factors'] = n_factors = meta.n_factors
+    ###################################################
 
     # Probability thresholds associated with the original training data (R)
-    p_threshold = uc.estimateProbThresholds(R, L=L_train, pos_label=1, policy=policy_threshold)
+    results['p_threshold'] = p_threshold = uc.estimateProbThresholds(R, L=L_train, pos_label=1, policy=policy_threshold)
 
     # Re-estimate the p_threshold as well 
-    reestimated['p_threshold2'] = p_threshold_new = uc.estimateProbThresholds(Rh, L=L_train, pos_label=1, policy=policy_threshold)
+    results['p_threshold2'] = p_threshold2 = results['p_threshold_new'] = \
+         p_threshold_new = uc.estimateProbThresholds(Rh, L=L_train, pos_label=1, policy=policy_threshold)
 
     if verbose: 
         print(f"[info] From R to Rh, delta(Frobenius norm)= {LA.norm(Rh-R, ord='fro')}")
@@ -515,79 +579,72 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
     ###################################################
     msg = ""
 
-    # [todo] Try different strategies of reducing T to label predictions
-    reestimated['lh_maxvote'] = lh = uc.estimateLabels(T, L=[], p_th=p_threshold, pos_label=1) # "majority vote given proba thresholds" is the default strategy
-    reestimated['lh2_maxvote_pth_unadjusted'] = lh_new_orig_pth = \
-            uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T and original p_th to predict labels
-    reestimated['lh2_maxvote_pth_adjusted'] = lh_new = \
-            uc.estimateLabels(Th, L=[], p_th=p_threshold_new, pos_label=1) # Use the re-estimated T to predict labels
-    msg += f"[info] How different are lh and lh_new? {distance.hamming(lh, lh_new)}\n"
+    # Try different strategies of reducing T to label predictions
+    
+    options = {"old+p_th": (R, T, p_threshold),  # original rating matrix + original threshold
+               "new+p_th": (Rh, Th, p_threshold), # new rating matrix + original threshold (transitional case)
+               "new+p_th2": (Rh, Th, p_threshold2) # new rating matrix + new threshold
+               }
 
+    # Make probability (and label) predictions using different methods
+    methods = {}
+    for method, dataset in options.items(): 
+        # print(method, '->', name_entry('test', method))
+        R, T, p_th = dataset
 
-    # 1. Prediction: By majority vote
-    ####################################
+        # --- Mean Aggregation --- 
+        y_pred_mean = np.mean(T, axis=0)
+        metrics_probs, metrics_labels = ev.calculate_all_metrics(L_test, y_pred_mean, verbose=verbose)
+        methods[name_entry('y_pred_mean', method)] = y_pred_mean
 
-    # Evaluate using a given performance score (since CF ensemble is primarily targeting imbalance class distributions, 
-    # by defeaut, we will use F1 score)
-    reestimated['score_lh_maxvote'] = reestimated['score_baseline'] = perf_score = f1_score(L_test, lh)
-    scores.append((perf_score , {'lh': lh, 'p_threshold': p_threshold, 'name': 'lh_maxvote'}))
-    msg += f'[result] Majority vote: F1 score with the original T:  {perf_score}\n'
+        # --- Majority Vote --- 
+        # Estimate labels directly ("majority vote given proba thresholds" is the default strategy)
+        lh_maxvote = uc.estimateLabels(T, L=[], p_th=p_th, pos_label=1) 
+        methods[name_entry('lh_maxvote', method)] = lh_maxvote
+        
+        # Predict labels via probabilities
+        y_pred_maxvote = combiner.combine(T, p_threshold=p_th, aggregate_func='majority')
 
-    reestimated['score_lh2_maxvote_pth_unadjusted'] = perf_score = f1_score(L_test, lh_new_orig_pth)
-    scores.append((perf_score , {'lh': lh_new_orig_pth, 'p_threshold': p_threshold, 'name': 'lh2_maxvote_pth_unadjusted'}))
-    msg += f'[result] Majority vote: F1 score with re-estimated Th using original p_threshold: {perf_score}\n'
+        # --- Stacking ---
+        if include_stacking: 
+            stacker = kargs.get('stacker', None)
+            grid = kargs.get('grid', {}) # hyperparameter grid
+            if stacker is None: 
+                stacker = LogisticRegression() 
+                grid = uclf.hyperparameter_template('logistic')
+            else: 
+                assert callable(stacker), f"Invalid meta-classifier: {stacker}"
 
-    reestimated['score_lh2_maxvote_pth_adjusted'] = perf_score = f1_score(L_test, lh_new) 
-    scores.append((perf_score , {'lh': lh_new, 'p_threshold': p_threshold_new, 'name': 'lh2_maxvote_pth_adjusted'}))
-    msg += f'[result] Majority vote: F1 score with re-estimated Th: {perf_score}\n'
+            model_tuned = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(R.T, L_train)
+            y_pred_stacker = model_tuned.predict_proba(T.T)[:, 1]
+            methods[name_entry('y_pred_stacker', method)] = y_pred_stacker
+    results.update(methods)
 
-    if verbose: print(msg)
+    # Model evaluation
+    # print(f"[debug] methods:\n{methods}\n")  
 
-    # 2. Prediction: By stacking
-    ####################################
-    # Parameters: 
-    #   - include_stacking
-    #   - stacker 
-    #   - grid
-    msg = ""
-    include_stacking = kargs.get('include_stacking', False) 
-    if include_stacking:
-        stacker = kargs.get('stacker', None)
-        grid = kargs.get('grid', {})
-        if stacker is None: 
-            stacker = LogisticRegression() 
-            grid = uclf.hyperparameter_template('logistic')
-        else: 
-            assert callable(stacker), f"Invalid meta-classifier: {stacker}"
+    y_true = L_test
+    ranking = {metric: [] for metric in target_metrics}
+    for method, y_score in methods.items(): 
 
-        lh = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(R.T, L_train).predict(T.T)
-        reestimated['score_lh_stacker'] = f1_score(L_test, lh) 
-        msg += f"[result] Stacking: F1 score with the original T:  {reestimated['score_lh_stacker']}\n"
+        # Use fmax as the probability threshold
+        fmax, p_th = uclf.fmax_score_threshold(y_true, y_score, beta=1, pos_label=1)
+        # Note: Other strategies are possible
+        
+        metric_scores, metric_labels = ev.calculate_all_metrics(y_true, y_score, p_th=p_th)
+        metric_scores.update(metric_labels)
+        metric_scores['p_threshold'] = p_th
+        
+        for metric in target_metrics:
+            ranking[metric].append( (method, metric_scores[metric]) ) # within the same performance metric, rank models by their scores
 
-        lh_new = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(Rh.T, L_train).predict(Th.T)
-        reestimated['score_lh2_stacker_pth_adjusted'] = f1_score(L_test, lh_new)
-        msg += f"[result] Stacking: F1 score with re-estimated Th: {reestimated['score_lh2_stacker_pth_adjusted']}\n" 
+        display(metric_scores, method=method, metrics=target_metrics, msg="")
 
-        if verbose: print(msg)
+    print("#" * 50); print('\n')
+    ranking_sorted = calculate_ranking(ranking)
+    results.update(ranking_sorted)
 
-    # 3. Rank parameter settings
-    ####################################
-    msg = ""
-    # Choose the best settings (excluding stacking on re-estiamted matrices)
-    scores_sorted = sorted(scores, key=lambda x: x[0], reverse=True) 
-    if verbose > 1: msg += f"[result] Methods ranked:\n{[(s, d['name']) for s, d in scores_sorted]}\n\n"
-    reestimated['best_params'] = scores_sorted[0][1] # select the best setting according to the performance measure
-
-    if verbose: 
-        # mode = 'unreliable only' if unreliable_only else 'complete' # 'complete' reestimation or reestimating the entire rating matrix
-        msg += f"[result] Best settings: {reestimated['best_params']['name']}, score: {scores_sorted[0][0]}\n"
-        print(msg)
-    if verbose > 1: 
-        print("[help] Reestiamted quantities are available through the following keys:")
-        for k, v in reestimated.items(): 
-            print(f'  - {k}')
-
-    return reestimated
+    return results
 
 def analyzer_pipeline(model, X, L, Pc, *, p_threshold=[], policy_threshold='fmax', **kargs):
 

@@ -41,6 +41,10 @@ def is_hard_filter(P, n_codes_ref=None):
         return False 
   
     return True
+# [alias] 
+def is_mask(P, n_codes_ref=None): 
+    # A hard filter IS a "mask" with 0s and 1s (instead of continous values in [0, 1] like those in soft filters)
+    return is_hard_filter(P, n_codes_ref=n_codes_ref)
 
 def to_hard_filter(P, r_th, n_codes_ref=None, dtype='int', inplace=False):
     if is_hard_filter(P, n_codes_ref): 
@@ -125,7 +129,7 @@ def infer_reliability_threshold(X, L, P, p_th, *, policy_threshold='balanced', m
     # NOTE: 
     #   1. Reliability threshold may depend on the class label (can we really decouple reliability threshold from class label?)
     r_th = []
-    
+    if verbose > 1: print(f"[threshold] Using policy: {policy_threshold}")
     if policy_threshold == 'prior': # A. Global prior
         r_th_global = (Po == 1).sum()/(Po.size+0.0)
     
@@ -155,9 +159,17 @@ def infer_reliability_threshold(X, L, P, p_th, *, policy_threshold='balanced', m
             r_th.append(r_th_i)
 
     else: # B. Balanced accuracy
+        threshold_fn = lambda x, y: 0.5
+        if policy_threshold.startswith('bal'): # B. Balanced accuracy
+            thresholds_fn = uclf.acc_max_threshold
+        elif policy_threshold.startswith('f'): # C. fmax
+            thresholds_fn = uclf.fmax_threshold
+        else: 
+            raise NotImplementedError
+
         labels = np.ravel(Po) # true filter value (reliable entries (1s) are those corresponding to TPs and TNs) 
         predictions = np.ravel(Pr) # predicted filter value
-        r_th_global = uclf.acc_max_threshold(labels, predictions, verbose=0)
+        r_th_global = threshold_fn (labels, predictions)
 
         for i in range(R.shape[0]): # foreach BP/user row i, find its threshold individually
 
@@ -165,7 +177,7 @@ def infer_reliability_threshold(X, L, P, p_th, *, policy_threshold='balanced', m
             if idx_reliable.sum() > 0: 
                 labels = Po[i] # i-th row P
                 predictions = Pr[i]
-                r_th_i = uclf.acc_max_threshold(labels, predictions, verbose=0)
+                r_th_i = threshold_fn (labels, predictions)
             else: 
                 r_th_i = r_th_gobal # global prior
                 
@@ -243,6 +255,8 @@ def filter_by_majority_vote(X, p_th, **kargs):
 
     # Parameters
     p_threshold = p_th
+
+    if isinstance(p_threshold, float): p_threshold = np.repeat(p_threshold, X.shape[0])
     if len(p_threshold) != X.shape[0]: raise ValueError(f"The size of `p_threshold` must equal nrow(X): {X.shape[0]} but given {len(p_threshold)}")
     pos_label = kargs.get('pos_label', 1)
     dtype = kargs.get('dtype', int)
@@ -741,8 +755,8 @@ def make_seq2seq_training_data(R, Po=None, L=None, include_label=True, **kargs):
 
             Y.append( np.vstack( (Po[:, j].reshape(-1, 1), L[j]) )) # Also append the class label L[j] and assume positive class as having positive polarity
 
-    X = np.array(X)
-    Y = np.array(Y)
+    X = np.array(X).astype('float')
+    Y = np.array(Y).astype('float')
     if verbose: 
         print(f"[info] shape(X): {X.shape}, shape(Y): {Y.shape}")
 
