@@ -747,12 +747,9 @@ def make_seq2seq_training_data(R, Po=None, L=None, include_label=True, **kargs):
 
         for j in range(R.shape[1]):
             X.append( np.vstack( (R[:, j].reshape(-1, 1), L_heuristic[j]) )) # Append either a heustically guessed label or zero-pad at the end of the rating sequence ... 
-            # ... LSTM requires that the input and output sequence have the same length. 
-            # ... The label sequence Y has an additional class label at the end as part of the sequence
-            # ... while the input sequence does not (therefore, we needed to either zero pad the input sequence or use 
-            # ... a heuristic for the class label so that X[i] and Y[i] share the same length. 
+            # Note: 
             # Why don't we add class label to X? Because at the prediction time, we will not know the class label (which is to be predicted) 
-
+            
             Y.append( np.vstack( (Po[:, j].reshape(-1, 1), L[j]) )) # Also append the class label L[j] and assume positive class as having positive polarity
 
     X = np.array(X).astype('float')
