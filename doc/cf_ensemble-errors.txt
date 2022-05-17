@@ -1,4 +1,16 @@
 
+# Check points to see if improved 
+
+# 1. 
+# X_test now carries adjusted labels; how do they compare to the original heuristic?
+    print(f"> L_heuristic |     f1: {f1_score(L_test, y_pred)}, balanced acc: {balanced_accuracy_score(L_test, y_pred)}")
+    print(f"> L_heuristic_adj | f1: {f1_score(L_test, y_pred_adj)}, balanced acc: {balanced_accuracy_score(L_test, y_pred_adj)}")
+
+# 2. evalulate_filter() 
+     Pre-CF performance comparison
+
+# 3. last part: evaluating the new matrix
+
 # Tips 
   1. include label in seq2seq model has benefits
       + if not, the seq2seq model's accuracy is not good 

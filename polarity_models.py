@@ -758,6 +758,163 @@ def make_seq2seq_training_data(R, Po=None, L=None, include_label=True, **kargs):
         print(f"[info] shape(X): {X.shape}, shape(Y): {Y.shape}")
 
     return (X, Y) # X and Y should be in 3D, which is required by TF's LSTM 
+def predict_filter(model_seq, X, batch_size): 
+    Y = model_seq.predict(X, batch_size=batch_size) 
+    return Y
+
+def make_seq2seq_training_data2(R, Po=None, L=None, include_label=True, **kargs): 
+    import utils_cf as uc
+
+    verbose = kargs.get('verbose', 0)
+    filter_type = kargs.get('filter_type', 'mask') # Options: 'mask' ({0, 1}-encoding), 'polarity', ''
+
+    p_threshold = kargs.get('p_threshold', [])
+    if Po is None: # If the probability filter is not provided externally, we need to estimate using a default method
+        assert len(p_threshold) > 0 and L is not None
+        assert (len(p_threshold), len(L)) == R.shape
+
+        if filter_type.startswith( ("mask", "proba", "filter") ): # 0-1 encoding
+            Po, _ = probability_filter(R, L, p_threshold)
+        elif filter_type.startswith( "po" ):
+            Po, _ = polarity_matrix(R, L, p_threshold) # {-1,1} encoding, possibly including 0
+        elif filter_type == "color":
+            Po, _ = color_matrix(R, L, p_threshold) # {-2, -1, 1, 2} encoding; possibly including 0 and more
+
+        elif filter_type.startswith("pref"):
+            raise NotImplementedError("For preference filter, please provide a pre-computed `Po`")
+        else: 
+            raise ValueError(f"Unrecognized filter type: {filter_type}")
+        
+    if L is not None: assert len(L) == R.shape[1]
+
+    assert R.shape == Po.shape
+    
+    if sparse.issparse(Po): Po = Po.A
+
+    X = [] # input sequences (one training instance consists of `n_users` ratings per data point, where `n_users` = R.shape[0])
+    Y = [] # labels or output sequences
+
+    if not include_label: 
+        for j in range(R.shape[1]):
+
+            X.append( R[:, j].reshape(-1, 1) ) # number of "timesteps" is the number of classifiers/users, where ... 
+            # ... each object/rating is represented by 1 feature value, which is the rating itself
+
+            Y.append(Po[:, j].reshape(-1, 1) ) # `X -> Y` maps a sequence of ratings to a sequence of polarities 
+    else: 
+        for j in range(R.shape[1]):
+            X.append( np.vstack( (R[:, j].reshape(-1, 1), L[j]) )) # L[j] is the ground-truth label for j-th instance  
+             
+            Y.append( np.vstack( (Po[:, j].reshape(-1, 1), 0)   )) # pad a zero as the element of the output sequence
+            # NOTE: padded zeros have no meaning but just to keep the input and output lengths equal
+
+    X = np.array(X).astype('float')
+    Y = np.array(Y).astype('float')
+    if verbose: 
+        print(f"[info] shape(X): {X.shape}, shape(Y): {Y.shape}")
+
+    return (X, Y) # X and Y should be in 3D, which is required by TF's LSTM 
+
+# [todo]
+def predict_filter2(model_seq, X, batch_size, **kargs): 
+    import combiner
+
+    pos_label = kargs.get("pos_label", 1)
+    verbose = kargs.get("verbose", 0)
+    return_labels = kargs.get("return_labels", False)
+
+    n_users = X.shape[1]-1 
+    n_items = X.shape[0]
+
+    # [todo] proba threshold is probably not needed here
+    p_threshold = kargs.get("p_threshold", None)
+    if p_threshold is None: p_threshold = np.array([0.5] * n_users)
+
+    # X holds the origina label guess
+    y_original = X[:, n_users, 0]
+
+    Y = model_seq.predict(X, batch_size=batch_size)
+    
+    # Create alternative labeling hypothesis
+    ##########################################
+    neg_label = 1 - pos_label
+    pos_idx = np.where(y_original==pos_label)[0]
+    neg_idx = np.where(y_original==neg_label)[0]
+
+    # Alternative hypothesis by flipping the original label guess
+    y_flipped = y_original.copy()
+    y_flipped[pos_idx] = neg_label
+    y_flipped[neg_idx] = pos_label
+    ##########################################
+
+    Xa = X.copy()
+    Xa[:, n_users, 0] = y_flipped
+    Ya = model_seq.predict(Xa, batch_size=batch_size)
+
+    # Which hypothesis is more likely? y_original or y_flipped?
+
+    # "Null" hypothesis
+    X0 = X.squeeze().T  # e.g. (1000, 6, 1) -> (1000, 6) -> (6, 1000)
+    X0 = X0[:n_users, :]
+    Y0 = Y.squeeze().T   # predicted fitler given `X` with labels: y_original
+    Y0 = Y0[:n_users, :] # the last element of Y is just zero padding
+    assert X0.shape == Y0.shape, f"shape(X0): {X0.shape} != shape(Y0): {Y0.shape}"
+    # Y0_mask = to_hard_filter(Y0, r_th=0.5, inplace=False)
+
+    # "Alternative" hypothesis
+    X1 = Xa.squeeze().T # 
+    X1 = X1[:n_users, :]
+    Y1 = Ya.squeeze().T  # predicted filter given `Xa` with labels: y_flipped
+    Y1 = Y1[:n_users, :]
+    assert X1.shape == Y1.shape
+    # Y1_mask = to_hard_filter(Y1, r_th=0.5, inplace=False)
+
+    # print(f"X0: {X0.shape}, Y0: {Y0.shape}, X1: {X1.shape}, Y1: {Y1.shape} ")
+
+    y_adjusted = []
+    n_flipped = 0
+    for i in range(n_items):
+
+        score0 = score1 = 0
+        # The original/null hypothesis
+        p = Y0[:, i]   
+        x = X0[:, i]
+        y_pred_i = combiner.combine_given_filter(x[:, None], p[:, None], aggregate_func='mean', axis=0)
+        y_orig_i = y_original[i]
+
+        # Is the prediction and the original guess consistent? 
+        score0 = (y_orig_i - y_pred_i)**2
+
+        # The alternative hypothesis 
+        p = Y1[:, i]   
+        x = X1[:, i]
+        y_pred_i = combiner.combine_given_filter(x[:, None], p[:, None], aggregate_func='mean', axis=0)
+        y_alter_i = y_flipped[i]
+        assert (y_orig_i + y_alter_i) == 1
+
+        score1 = (y_alter_i - y_pred_i)**2
+
+        # The more consistent label is probably more accurate (?)
+        if score0 <= score1:  
+            y_adjusted.append(y_orig_i)
+        else: 
+            y_adjusted.append(y_alter_i)
+            n_flipped += 1 
+
+    if verbose: 
+        print(f"[info] Found n={n_flipped} different labeling results wrt the original guess")
+    
+    # Insert the new guesstimated labels
+    y_adjusted = np.array(y_adjusted)
+    Xa[:, n_users, 0] = y_adjusted
+
+    # Now make final prediction
+    Ya = model_seq.predict(Xa, batch_size=batch_size)
+
+    if return_labels: 
+        return Ya, y_adjusted
+
+    return Ya
 
 
 # Models

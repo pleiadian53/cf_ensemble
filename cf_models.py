@@ -759,24 +759,24 @@ def analyze_reconstruction(model, X, L, Pc, n_train=None, p_threshold=[], policy
         ####################################
         msg = ""
         reestimated['lh_maxvote'] = lh = uc.estimateLabels(T, L=[], p_th=p_threshold, pos_label=1) # "majority vote given proba thresholds" is the default strategy
-        reestimated['lh2_maxvote_pth_unadjusted'] = lh_new_orig_pth = \
+        reestimated['lh_maxvote_new'] = lh_new_orig_pth = \
                 uc.estimateLabels(Th, L=[], p_th=p_threshold, pos_label=1) # Use the re-estimated T and original p_th to predict labels
-        reestimated['lh2_maxvote_pth_adjusted'] = lh_new = \
+        reestimated['lh_maxvote_new_calibrated'] = lh_new = \
                 uc.estimateLabels(Th, L=[], p_th=p_threshold_new, pos_label=1) # Use the re-estimated T to predict labels
         msg += f"[info] How different are lh and lh_new? {distance.hamming(lh, lh_new)}\n"
 
         # Evaluate using a given performance score (since CF ensemble is primarily targeting imbalance class distributions, 
         # by defeaut, we will use F1 score)
-        reestimated['score_lh_maxvote'] = reestimated['score_baseline'] = perf_score = f1_score(L_test, lh)
+        reestimated['f1_lh_maxvote'] = reestimated['score_baseline'] = perf_score = f1_score(L_test, lh)
         scores.append((perf_score , {'lh': lh, 'p_threshold': p_threshold, 'name': 'lh_maxvote'}))
         msg += f'[result] Majority vote: F1 score with the original T:  {perf_score}\n'
 
-        reestimated['score_lh2_maxvote_pth_unadjusted'] = perf_score = f1_score(L_test, lh_new_orig_pth)
-        scores.append((perf_score , {'lh': lh_new_orig_pth, 'p_threshold': p_threshold, 'name': 'lh2_maxvote_pth_unadjusted'}))
+        reestimated['f1_lh_maxvote_new'] = perf_score = f1_score(L_test, lh_new_orig_pth)
+        scores.append((perf_score , {'lh': lh_new_orig_pth, 'p_threshold': p_threshold, 'name': 'lh_maxvote_new'}))
         msg += f'[result] Majority vote: F1 score with re-estimated Th using original p_threshold: {perf_score}\n'
 
-        reestimated['score_lh2_maxvote_pth_adjusted'] = perf_score = f1_score(L_test, lh_new) 
-        scores.append((perf_score , {'lh': lh_new, 'p_threshold': p_threshold_new, 'name': 'lh2_maxvote_pth_adjusted'}))
+        reestimated['f1_lh_maxvote_new_calibrated'] = perf_score = f1_score(L_test, lh_new) 
+        scores.append((perf_score , {'lh': lh_new, 'p_threshold': p_threshold_new, 'name': 'lh_maxvote_new_calibrated'}))
         msg += f'[result] Majority vote: F1 score with re-estimated Th: {perf_score}\n'
 
         if verbose: print(msg)
@@ -796,12 +796,14 @@ def analyze_reconstruction(model, X, L, Pc, n_train=None, p_threshold=[], policy
 
         # X_train, y_train = R.T, L_train
         lh = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(R.T, L_train).predict(T.T)
-        reestimated['score_lh_stacker'] = perf_score = f1_score(L_test, lh) 
+        reestimated['f1_lh_stacker'] = perf_score = f1_score(L_test, lh) 
+        scores.append((perf_score , {'lh': lh, 'p_threshold': '?', 'name': 'lh_stacker'}))
         msg += f'[result] Stacking: F1 score with the original T:  {perf_score}\n'
 
         # X_train, y_train = Rh.T, L_train
         lh_new = uclf.tune_model(stacker, grid, scoring='f1', verbose=0)(Rh.T, L_train).predict(Th.T)
-        reestimated['score_lh2_stacker_pth_adjusted'] = perf_score = f1_score(L_test, lh_new)
+        reestimated['f1_lh_stacker_new'] = perf_score = f1_score(L_test, lh_new)
+        scores.append((perf_score , {'lh': lh_new, 'p_threshold': '?', 'name': 'lh_stacker_new'}))
         msg += f'[result] Stacking: F1 score with re-estimated Th: {perf_score}\n'   
         
         if verbose: print(msg)  
