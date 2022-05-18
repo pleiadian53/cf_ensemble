@@ -1,5 +1,12 @@
 
 
+# Different ways to formulate final predictions via seq2seq model
+
+Pt_mask_s2s => y_pred_s2s
+
+
+
+
 # Estimating probability threshold
 
 
@@ -20,6 +27,7 @@ p_th = combiner.estimate_threshold_with_reliable_entries(R, L_train, p_threshold
                                                   aggregate_func='mean', 
                                                   policy_threshold=policy_threshold)
 print(f"> (Combined) probability threshold considering only reliable entries, p_th={p_th}")
+
 
 
 # Demo 5: Polarity Model

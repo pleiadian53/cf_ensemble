@@ -507,11 +507,29 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
             metric_to_methods_sorted[metric] = ranking
 
             msg += f"> Metric={metric}\n"
+            prev_score = 0.0
             for i, (method, score) in enumerate(ranking): 
                 if i == 0: 
                     msg += f"{method} ({score})"
+                    prev_score = score
                 else: 
-                    msg += ' > ' + f'{method} ({score})'
+                    if score == prev_score: 
+                        msg += ' = ' + f'{method} ({score})'
+                    else: 
+                        if greater_is_better:  
+                            if score < prev_score: 
+                                msg += ' > ' + f'{method} ({score})'
+                            else:
+                                msg = f"Scores should have been sorted in descending order (metric: {metric}, great is better: {greater_is_better}):\n{ranking}\n"
+                                raise ValueError(msg)
+                        else: 
+                            if score > prev_score: 
+                                msg += ' < ' + f'{method} ({score})'
+                            else: 
+                                msg = f"Scores should have been sorted in ascending order (metric: {metric}, great is better: {greater_is_better}):\n{ranking}\n"
+                                raise ValueError(msg)
+                    # Update score
+                    prev_score = score
             msg += '\n\n'
             
         print(msg)
