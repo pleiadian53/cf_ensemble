@@ -51,6 +51,7 @@ import matplotlib.pylab as plt
 # %matplotlib inline
 
 # Misc
+import sys, os
 from pandas import DataFrame
 import numpy as np
 from numpy import linalg as LA
@@ -285,6 +286,104 @@ def predict_by_knn(model, model_knn, R, T, L_train, L_test, C, Pc, codes={}, pos
 
 # Loss functions
 ##########################################################################
+
+# [todo]
+def filter_predict_loss(alpha=0.5):
+    def filter_predict_loss_core(y_true, y_pred): 
+        """
+
+        Memo
+        ----
+        # 'x' <- [[1, 1, 1]
+        #         [1, 1, 1]]
+        tf.reduce_sum(x) ==> 6
+        tf.reduce_sum(x, 0) ==> [2, 2, 2]
+        tf.reduce_sum(x, 1) ==> [3, 3]
+        tf.reduce_sum(x, 1, keep_dims=True) ==> [[3], [3]]
+        tf.reduce_sum(x, [0, 1]) ==> 6
+        """
+        seq_len = tf.size(y_pred.shape[1]) # shape(y_pred): bsize, n_timesteps (nt), n_features (nf)
+
+        # 1. `y_true` has shape (batch size, sequence_length, n_features) or (bsize, nt, nf) 
+        # 
+        # 2. `y_true` consists of two parts: 
+        # 
+        #     first feature dimension: y_true[:, :, 0], which represents the reliabilty/polarity sequence (+ zero padding)
+        #     second feature dimension: y_true[:, :, 1], which represents the BP probability scores + class label
+        # 
+        #     -  y_true[:, :, 0] is the main supervising signal, that is, what we aim to predict given x 
+        #        i.e. given BP probability scores, predict their reliability (polarity) scores, with 0 being unreliable 1 being reliable
+        #        and these true reliabilty scores are packed into the first feature dimension y_true[:, :, 0]
+        # 
+        #     -  y_true[:, :, 1] is a supplementary signal that helps to construct the loss function with desirable properties
+        # 
+        #        In this loss function, we want the mask prediction (which will not be exactly 0s or 1s but a continous value in [0, 1]) 
+        #        to not only approximate the 0-1 mask values but also help to predict the class label (which is packed into the last
+        #        element of this feature dimension). How does these predicted mask values help to predict the class label?
+        #        Well, one possible criterion is that when we softmax-convert them into "weights", their weighted average 
+        #        should be as close to the class label as possible. Ratings (BP probabilities) with higher reliabilty are given 
+        #        higher weights while ratings with lower reliabilty are given less weights, which is captured by the softmax. 
+        #        Why using softmax? Because the ratings are probability scores and therefore we want the weighted ratings remain a 
+        #        valid probability; that is, when we take weighted average on the predicted reliability scores, 
+        #        the result should still be a valid probability. 
+     
+        mask_seq = y_true[:, :, 0] # this is what a seq2seq model aims to predict
+        # ... shape: (bsize, nt), where each input sequence is a row vector
+
+        # Any training instance is a sequence, which consists of two parts: 1) mask values (reliability of BP predictions) 2) class label
+        y_true_mask = mask_values = mask_seq[:, :-1] # (bsize, nt) -> (bsize, nt-1), slices s.t. all but last column is retained
+        # ... shape: (bsize, nt-1)
+
+        # dummy = mask_seq[:, -1] # the last element of y_true[:, :, 0] is just a zero padding
+        # ... shape: (bsize, )
+
+        # BP probability scores (aka ratings)
+        rating_seq = y_true[:, :, 1] # the corresponding BP probability scores, a tagged-on information
+        # ... shape: (bsize, nt)
+
+        y_true_rating = ratings = rating_seq[:, :-1] # the rating part of the rating sequence
+        # ... shape: (bsize, nt-1)
+        label = rating_seq[:, -1]
+        # ... shape: (bsize, )
+
+        # Loss criterion #1
+        # The sequence of mask values (mask_seq[:, :-1]) and the predicted values (y_pred[:, :, 0]) should combine 
+        # the probability scores (ratings) in a similar fashion that their results are as close as possible
+
+        # n_masked = K.sum( tf.dtypes.cast( K.equal(mask_values, 0), dtype = tf.float64 )) # needs to be float64 to be compatible with K.sum(x * y)
+        
+        # Take the "mask-average" of the probabilities as the final probability prediction, if, however, the mask is degenerative 
+        # (all zeros or masked), then take average of all probabilities
+        # ref_score = tf.where(K.equal(n_masked, seq_len), K.mean(ratings), K.sum(mask_values * ratigns)/n_masked)
+        # [criterion] ref_score ~ label_score? MSE loss 
+
+        # Loss criterion #2: the softmax-weighted average of the predicted mask values should be as close as possible to the class label
+        predicted_mask_seq = y_pred[:, :, 0] # shape (bsize, nt)
+        y_pred_mask = predicted_mask_seq[:, :-1] # shape (bsize, nt-1)
+
+        # y_pred_dummy = predicted_mask_seq[:, -1] # the last element is just zero padding; its predicted value should be close to 0
+
+        weights = tf.nn.softmax(y_pred_mask, axis=-1) # convert to weights via softmax along the mask-value dimension
+        # ... softmax helps to ensure that predicted mask values are summed to 1, resulting in valid weighted average of the ratings 
+        # ... that remains a valid probaiblity score 
+        # shape: (bsize, nt-1)
+
+        label_score = K.sum(weights * ratings, axis=-1) # the weighted average of the ratings should help predict the label
+        # shape: (bsize, )
+        
+        # Use binary cross entropy to measure the final loss (want `label_score` to be as close as possible to `label`)
+        bce = tf.keras.losses.BinaryCrossentropy(from_logits=False)
+
+        # y_true_mask = tf.expand_dims(y_true_mask, axis=-1) # shape: (bsize, nt-1, 1)
+        # y_pred_mask = tf.expand_dims(y_pred_mask, axis=-1)
+
+        # tf.print("y_true_mask", y_true_mask[1, :], output_stream=sys.stdout)
+        # tf.print("y_pred_mask", y_pred_mask[1, :], output_stream=sys.stdout)
+        return bce(y_true_mask, y_pred_mask) # alpha * bce(y_true_mask, y_pred_mask) + (1.0-alpha) * bce(label, label_score)
+
+    return filter_predict_loss_core
+
+
 def c_squared_loss(y_true, y_pred):
 
     y_label = y_true[:, 0] # R[i][j] is the "label", which is a probability score in [0, 1]
@@ -292,10 +391,10 @@ def c_squared_loss(y_true, y_pred):
     colors =  y_true[:, 2]
     thresholds = y_true[:, 3]
 
-    mask_tp = tf.dtypes.cast( K.equal(colors, 2), dtype = tf.float32 ) # TP
-    mask_tn = tf.dtypes.cast( K.equal(colors, 1), dtype = tf.float32 ) # TN 
-    mask_fp = tf.dtypes.cast( K.equal(colors,-2), dtype = tf.float32 ) # FP
-    mask_fn = tf.dtypes.cast( K.equal(colors,-1), dtype = tf.float32 ) # FN
+    mask_tp = tf.dtypes.cast( K.equal(colors, 2), dtype = tf.float64 ) # TP
+    mask_tn = tf.dtypes.cast( K.equal(colors, 1), dtype = tf.float64 ) # TN 
+    mask_fp = tf.dtypes.cast( K.equal(colors,-2), dtype = tf.float64 ) # FP
+    mask_fn = tf.dtypes.cast( K.equal(colors,-1), dtype = tf.float64 ) # FN
 
     # if TP, want y_pred >= y_true, i.e. the larger (the closer to 1), the better
     loss_tp = weights * K.square(K.maximum(y_label-y_pred, 0)) # if y_pred > y_label => y_label-y_pred < 0 => no loss ...
@@ -327,10 +426,10 @@ def confidence_weighted_loss(y_true, y_pred): # this has to be used with .add_lo
     colors =  y_true[:, 2]
   
     # Conditions
-    mask_tp = tf.dtypes.cast( K.equal(colors, 2), dtype = tf.float32 )
-    mask_tn = tf.dtypes.cast( K.equal(colors, 1), dtype = tf.float32 )
-    mask_fp = tf.dtypes.cast( K.equal(colors,-2), dtype = tf.float32 )
-    mask_fn = tf.dtypes.cast( K.equal(colors,-1), dtype = tf.float32 )
+    mask_tp = tf.dtypes.cast( K.equal(colors, 2), dtype = tf.float64 )
+    mask_tn = tf.dtypes.cast( K.equal(colors, 1), dtype = tf.float64 )
+    mask_fp = tf.dtypes.cast( K.equal(colors,-2), dtype = tf.float64 )
+    mask_fn = tf.dtypes.cast( K.equal(colors,-1), dtype = tf.float64 )
     # Note: We also need to convert these masks to numeric type so that we can use them to make the weighted sum
 
     # if TP, want y_pred >= y_true, i.e. the larger (the closer to 1), the better

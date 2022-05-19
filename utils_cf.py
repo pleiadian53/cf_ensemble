@@ -6053,7 +6053,7 @@ def compute_preference(P, Q, canonicalize=True, binarize=False, p_th=-1, name='X
 
     return Xpf
 
-def predict_by_importance_weights(X, W, aggregate_func='mean', fallback_on_low_weight=True, min_weight=0.1, axis=0):
+def predict_by_importance_weights(X, W, aggregate_func='mean', fallback_on_low_weight=True, min_weight=0.1, axis=0, verbose=0):
     def fallback(pv, func): # closure: min_weight
         # consider the columns where all weights are zero, what to do? use the row mean
         for j in range(W.shape[1]):  
@@ -6075,7 +6075,8 @@ def predict_by_importance_weights(X, W, aggregate_func='mean', fallback_on_low_w
         wcol_idx = np.where(wcol_sum_to_zero)[0]
 
         # It's possible that none of the classfier's predictions for a given data point was consider "reliable"; hence, some columns are all zeros
-        print('(predict_by_importance_weights) Found degenerated cases: {} (All-zero columns). Assign equal weights and take average for these cases'.format(len(wcol_idx)))
+        if verbose: 
+            print('(predict_by_importance_weights) Found degenerated cases: {} (All-zero columns). Assign equal weights and take average for these cases'.format(len(wcol_idx)))
 
         # revert to average? 
         for j in wcol_idx: 

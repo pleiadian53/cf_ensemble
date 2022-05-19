@@ -767,6 +767,7 @@ def make_seq2seq_training_data2(R, Po=None, L=None, include_label=True, **kargs)
 
     verbose = kargs.get('verbose', 0)
     filter_type = kargs.get('filter_type', 'mask') # Options: 'mask' ({0, 1}-encoding), 'polarity', ''
+    augmented = kargs.get('augmented', False) # if True, pack additional information to `Y` which help determine the loss
 
     p_threshold = kargs.get('p_threshold', [])
     if Po is None: # If the probability filter is not provided externally, we need to estimate using a default method
@@ -795,18 +796,37 @@ def make_seq2seq_training_data2(R, Po=None, L=None, include_label=True, **kargs)
     Y = [] # labels or output sequences
 
     if not include_label: 
-        for j in range(R.shape[1]):
+        if not augmented: 
+            for j in range(R.shape[1]):
 
-            X.append( R[:, j].reshape(-1, 1) ) # number of "timesteps" is the number of classifiers/users, where ... 
-            # ... each object/rating is represented by 1 feature value, which is the rating itself
+                X.append( R[:, j].reshape(-1, 1) ) # number of "timesteps" is the number of classifiers/users, where ... 
+                # ... each object/rating is represented by 1 feature value, which is the rating itself
+                Y.append(Po[:, j].reshape(-1, 1) ) # `X -> Y` maps a sequence of ratings to a sequence of polarities 
+        else: 
+            for j in range(R.shape[1]):
 
-            Y.append(Po[:, j].reshape(-1, 1) ) # `X -> Y` maps a sequence of ratings to a sequence of polarities 
+                X.append( R[:, j].reshape(-1, 1) ) # number of "timesteps" is the number of classifiers/users, where ... 
+                # ... each object/rating is represented by 1 feature value, which is the rating itself
+
+                y_aug = np.hstack( (Po[:, j].reshape(-1, 1), R[:, j].reshape(-1, 1)) )
+                Y.append( y_aug )
+
+
     else: 
-        for j in range(R.shape[1]):
-            X.append( np.vstack( (R[:, j].reshape(-1, 1), L[j]) )) # L[j] is the ground-truth label for j-th instance  
-             
-            Y.append( np.vstack( (Po[:, j].reshape(-1, 1), 0)   )) # pad a zero as the element of the output sequence
-            # NOTE: padded zeros have no meaning but just to keep the input and output lengths equal
+        if not augmented: 
+            for j in range(R.shape[1]):
+                X.append( np.vstack( (R[:, j].reshape(-1, 1), L[j]) )) # L[j] is the ground-truth label for j-th instance  
+                 
+                Y.append( np.vstack( (Po[:, j].reshape(-1, 1), 0)   )) # pad a zero as the element of the output sequence
+                # NOTE: padded zeros have no meaning but just to keep the input and output lengths equal
+        else: 
+            for j in range(R.shape[1]):
+                X.append( np.vstack( (R[:, j].reshape(-1, 1), L[j])) ) # L[j] is the ground-truth label for j-th instance  
+                 
+                po = np.vstack( (Po[:, j].reshape(-1, 1), 0)) # main supervised signal
+                r = np.vstack( (R[:, j].reshape(-1, 1), L[j])) # supplementary info
+                y_aug = np.hstack((po, r))
+                Y.append( y_aug ) 
 
     X = np.array(X).astype('float')
     Y = np.array(Y).astype('float')
@@ -821,6 +841,7 @@ def predict_filter2(model_seq, X, batch_size, **kargs):
 
     pos_label = kargs.get("pos_label", 1)
     verbose = kargs.get("verbose", 0)
+    mask_aggregate = kargs.get("mask_aggregate", False)
     return_labels = kargs.get("return_labels", False)
 
     n_users = X.shape[1]-1 
@@ -858,8 +879,9 @@ def predict_filter2(model_seq, X, batch_size, **kargs):
     X0 = X0[:n_users, :]
     Y0 = Y.squeeze().T   # predicted fitler given `X` with labels: y_original
     Y0 = Y0[:n_users, :] # the last element of Y is just zero padding
+
     assert X0.shape == Y0.shape, f"shape(X0): {X0.shape} != shape(Y0): {Y0.shape}"
-    # Y0_mask = to_hard_filter(Y0, r_th=0.5, inplace=False)
+    if mask_aggregate: Y0 = to_hard_filter(Y0, r_th=0.5, inplace=False)
 
     # "Alternative" hypothesis
     X1 = Xa.squeeze().T # 
@@ -867,7 +889,7 @@ def predict_filter2(model_seq, X, batch_size, **kargs):
     Y1 = Ya.squeeze().T  # predicted filter given `Xa` with labels: y_flipped
     Y1 = Y1[:n_users, :]
     assert X1.shape == Y1.shape
-    # Y1_mask = to_hard_filter(Y1, r_th=0.5, inplace=False)
+    if mask_aggregate: Y1 = to_hard_filter(Y1, r_th=0.5, inplace=False)
 
     # print(f"X0: {X0.shape}, Y0: {Y0.shape}, X1: {X1.shape}, Y1: {Y1.shape} ")
 
@@ -915,6 +937,17 @@ def predict_filter2(model_seq, X, batch_size, **kargs):
         return Ya, y_adjusted
 
     return Ya
+
+# def filter_predict(): 
+#     p = Y0[:, i]   
+#     x = X0[:, i]
+#     y_pred_i = combiner.combine_given_filter(x[:, None], p[:, None], aggregate_func='mean', axis=0)
+#     y_orig_i = y_original[i]
+
+#     # Is the prediction and the original guess consistent? 
+#     score0 = (y_orig_i - y_pred_i)**2
+
+#     return
 
 
 # Models

@@ -176,7 +176,7 @@ def combine_given_filter(X, P, aggregate_func='mean', axis=0, **kargs):
     predictions = np.zeros(X.shape[1])
     if pmodel.is_hard_filter(P):
         if verbose: print(f"[combine] `P` is a hard filter with values: {np.unique(P)}")
-        predictions = uc.predict_by_importance_weights(X, P, aggregate_func=aggregate_func, fallback_on_low_weight=False)
+        predictions = uc.predict_by_importance_weights(X, P, aggregate_func=aggregate_func, fallback_on_low_weight=False, verbose=verbose > 1)
         # Note: it's okay for `P` to be degenerative (having column- or row-wise filter values equal to 0)
     else: # P is a soft filter, where P[i,j] is a continous value between [0, 1]
         # if np.max(P) > 1.0:

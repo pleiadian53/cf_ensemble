@@ -2,7 +2,32 @@
 
 # Different ways to formulate final predictions via seq2seq model
 
-Pt_mask_s2s => y_pred_s2s
+
+mask_aggregate = True 
+
+1. 
+> L_heuristic |     f1: 0.2068965517241379, balanced acc: 0.5563981169421709
+> L_heuristic_adj | f1: 0.19230769230769232, balanced acc: 0.5528339485368855
+
+> Dataset='Test', method=seq2seq:
+> ... threshold:    0.5
+> ... balanced_acc: 0.7501792113824378
+> ... f1: 0.886778358766407
+> ... precision: 0.8298382264827581
+> ... recall: 0.9521081576533106
+
+How does it fare with majority vote?
+--------------------------------------------------
+> Dataset='Test', method=majority:
+> ... threshold:    ?
+> ... balanced_acc: 0.7970437776350027
+> ... f1: 0.8989455184534272
+> ... precision: 0.8632911392403241
+> ... recall: 0.9376718606780619
+
+2. 
+
+mask_aggregate = False
 
 
 
