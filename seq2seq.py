@@ -554,6 +554,7 @@ def train_test(model, X_train, y_train, X_test, y_test,
     verbose = kargs.get('verbose', 0)
     random_state = kargs.get('random_state', 53)
     n_train = X_train.shape[0]
+    metrics = kargs.get('metrics', ['accuracy', ])
 
     # patient early stopping
     #es = EarlyStopping(monitor='val_accuracy', mode='max', min_delta=1, patience=20)
@@ -604,26 +605,37 @@ def train_test(model, X_train, y_train, X_test, y_test,
     # list all data in history
     # print(history.history.keys())
     # evaluate the model
-    _, train_acc = model.evaluate( train_dataset,  # X_train, y_train, 
+    train_loss, train_score, *train_metrics = model.evaluate( train_dataset,  # X_train, y_train, 
                                        # batch_size=batch_size, 
                                        verbose=0)
-    _, test_acc = model.evaluate( test_dataset,  # X_test, y_test, 
+    test_loss, test_score, *test_metrics = model.evaluate( test_dataset,  # X_test, y_test, 
                                         # batch_size=batch_size, 
                                         verbose=0)
     
-    print('\nPREDICTION ACCURACY (%):')
-    print('> Train: %.3f, Test: %.3f' % (train_acc*100, test_acc*100))
-    
-    # summarize history for accuracy
+    # Primary metric in model evaluation
+    primary_metric = metrics[0]
+    if not isinstance(primary_metric, str):
+        if not hasattr(primary_metric, '__call__'): 
+            msg = f"Input metrics must be either a list of strings or functions but given:\n{primary_metric}\n"
+            raise ValueError(msg)
+        primary_metric = primary_metric.__name__
+
+    print(f'\nPerformance in {primary_metric}:')
+    print('> Train: %.3f, Test: %.3f' % (train_score, test_score)) 
+
+    # save model 
+    # model.save("my_seq2seq.h5")
+
+    # summarize history for the primary performance metric
     try: 
-        plt.plot(history.history['accuracy'])
-        plt.plot(history.history['val_accuracy'])
+        plt.plot(history.history[primary_metric])
+        plt.plot(history.history[f'val_{primary_metric}'])
     except: 
         print(history.history.keys())
         raise ValueError
 
-    plt.title(model.name +' accuracy')
-    plt.ylabel('accuracy')
+    plt.title(model.name + f' {primary_metric}')
+    plt.ylabel(primary_metric)
     plt.xlabel('epoch')
     plt.legend(['train', 'val'], loc='upper left')
     plt.show()

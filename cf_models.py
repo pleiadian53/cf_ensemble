@@ -14,6 +14,9 @@ from tensorflow.keras.optimizers import RMSprop
 from keras.utils.vis_utils import plot_model
 from tensorflow.keras import backend as K
 
+# Customized loss function 
+from tensorflow.python.ops import clip_ops, math_ops # constant_op
+
 #################################################################
 
 # Scikit-learn 
@@ -283,14 +286,168 @@ def predict_by_knn(model, model_knn, R, T, L_train, L_test, C, Pc, codes={}, pos
     return T_pred
 
 
+# Custom metrics 
+##########################################################################
+
+
+# For seq2seq model when `y_true` is augmented (first feature dimension: mask values, second feature dimension: ratings + class label)
+def recall(y_true, y_pred):
+
+    # `y_true` has shape (batch size, sequence_length, n_features) or (bsize, nt, nf) 
+    #  - y_true[:, :, 0] is the main supervising signal
+    #  - y_true[:, :, 1] is a supplementary signal that helps to construct the loss function with desirable properties
+    
+    mask_seq = y_true[:, :, 0] 
+    y_true_mask = mask_values = mask_seq[:, :-1] # shape: (bsize, nt-1)
+
+    predicted_mask_seq = y_pred[:, :, 0] # shape (bsize, nt)
+    y_pred_mask = predicted_mask_seq[:, :-1] # shape (bsize, nt-1)
+
+    true_positives = K.sum(K.round(K.clip(y_true_mask * y_pred_mask, 0, 1))) # K.clip ensures that tensor elements are bounded within [0, 1]
+    possible_positives = K.sum(K.round(K.clip(y_true_mask, 0, 1)))
+    recall_keras = true_positives / (possible_positives + K.epsilon())
+    return recall_keras
+
+def precision(y_true, y_pred):
+
+    mask_seq = y_true[:, :, 0] 
+    y_true_mask = mask_values = mask_seq[:, :-1] # shape: (bsize, nt-1)
+    predicted_mask_seq = y_pred[:, :, 0] # shape (bsize, nt)
+    y_pred_mask = predicted_mask_seq[:, :-1] # shape (bsize, nt-1)
+
+    true_positives = K.sum(K.round(K.clip(y_true_mask * y_pred_mask, 0, 1)))
+    predicted_positives = K.sum(K.round(K.clip(y_pred_mask, 0, 1)))
+    precision_keras = true_positives / (predicted_positives + K.epsilon())
+    return precision_keras
+
+def specificity(y_true, y_pred):
+
+    mask_seq = y_true[:, :, 0] 
+    y_true_mask = mask_values = mask_seq[:, :-1] # shape: (bsize, nt-1)
+    predicted_mask_seq = y_pred[:, :, 0] # shape (bsize, nt)
+    y_pred_mask = predicted_mask_seq[:, :-1] # shape (bsize, nt-1)
+
+    tn = K.sum(K.round(K.clip((1 - y_true_mask) * (1 - y_pred_mask), 0, 1)))
+    fp = K.sum(K.round(K.clip((1 - y_true_mask) * y_pred_mask, 0, 1)))
+    return tn / (tn + fp + K.epsilon())
+
+def negative_predictive_value(y_true, y_pred):
+
+    mask_seq = y_true[:, :, 0] 
+    y_true_mask = mask_values = mask_seq[:, :-1] # shape: (bsize, nt-1)
+    predicted_mask_seq = y_pred[:, :, 0] # shape (bsize, nt)
+    y_pred_mask = predicted_mask_seq[:, :-1] # shape (bsize, nt-1)
+
+    tn = K.sum(K.round(K.clip((1 - y_true_mask) * (1 - y_pred_mask), 0, 1)))
+    fn = K.sum(K.round(K.clip(y_true_mask * (1 - y_pred_mask), 0, 1)))
+    return tn / (tn + fn + K.epsilon())
+
+def f1(y_true, y_pred):
+    p = precision(y_true, y_pred)
+    r = recall(y_true, y_pred)
+    return 2 * ((p * r) / (p + r + K.epsilon()))
+
+def fbeta(y_true, y_pred, beta=2):
+    """
+
+    Reference 
+    ---------
+    1. https://medium.com/analytics-vidhya/custom-metrics-for-keras-tensorflow-ae7036654e05
+    """
+    mask_seq = y_true[:, :, 0] 
+    y_true_mask = mask_values = mask_seq[:, :-1] # shape: (bsize, nt-1)
+    predicted_mask_seq = y_pred[:, :, 0] # shape (bsize, nt)
+    y_pred_mask = predicted_mask_seq[:, :-1] # shape (bsize, nt-1)
+
+    y_pred_mask = K.clip(y_pred_mask, 0, 1)
+
+    tp = K.sum(K.round(K.clip(y_true_mask * y_pred_mask, 0, 1)), axis=1)
+    fp = K.sum(K.round(K.clip(y_pred_mask - y_true_mask, 0, 1)), axis=1)
+    fn = K.sum(K.round(K.clip(y_true_mask - y_pred_mask, 0, 1)), axis=1)
+
+    p = tp / (tp + fp + K.epsilon())
+    r = tp / (tp + fn + K.epsilon())
+
+    num = (1.0 + beta ** 2) * (p * r)
+    den = (beta ** 2 * p + r + K.epsilon())
+    return K.mean(num / den)
+
+def accuracy(y_true, y_pred): 
+    from keras.utils import metrics_utils
+
+    mask_seq = y_true[:, :, 0] 
+    y_true_mask = mask_values = mask_seq[:, :-1] # shape: (bsize, nt-1)
+
+    predicted_mask_seq = y_pred[:, :, 0] # shape (bsize, nt)
+    y_pred_mask = predicted_mask_seq[:, :-1] # shape (bsize, nt-1)
+
+    tp = K.sum(K.round(K.clip(y_true_mask * y_pred_mask, 0, 1)))
+    tn = K.sum(K.round(K.clip((1 - y_true_mask) * (1 - y_pred_mask), 0, 1)))
+    fp = K.sum(K.round(K.clip((1 - y_true_mask) * y_pred_mask, 0, 1)))
+    fn = K.sum(K.round(K.clip(y_true_mask * (1 - y_pred_mask), 0, 1)))
+
+    return (tp+tn)/(tp+tn+fp+fn)
+
+def matthews_correlation_coefficient(y_true, y_pred):
+
+    mask_seq = y_true[:, :, 0] 
+    y_true_mask = mask_values = mask_seq[:, :-1] # shape: (bsize, nt-1)
+
+    predicted_mask_seq = y_pred[:, :, 0] # shape (bsize, nt)
+    y_pred_mask = predicted_mask_seq[:, :-1] # shape (bsize, nt-1)
+
+    tp = K.sum(K.round(K.clip(y_true_mask * y_pred_mask, 0, 1)))
+    tn = K.sum(K.round(K.clip((1 - y_true_mask) * (1 - y_pred_mask), 0, 1)))
+    fp = K.sum(K.round(K.clip((1 - y_true_mask) * y_pred_mask, 0, 1)))
+    fn = K.sum(K.round(K.clip(y_true_mask * (1 - y_pred_mask), 0, 1)))
+
+    num = tp * tn - fp * fn
+    den = (tp + fp) * (tp + fn) * (tn + fp) * (tn + fn)
+    return num / K.sqrt(den + K.epsilon())
+
+def equal_error_rate(y_true, y_pred):
+    mask_seq = y_true[:, :, 0] 
+    y_true_mask = mask_values = mask_seq[:, :-1] # shape: (bsize, nt-1)
+    predicted_mask_seq = y_pred[:, :, 0] # shape (bsize, nt)
+    y_pred_mask = predicted_mask_seq[:, :-1] # shape (bsize, nt-1)
+
+    n_imp = tf.count_nonzero(tf.equal(y_true_mask, 0), dtype=tf.float32) + tf.constant(K.epsilon())
+    n_gen = tf.count_nonzero(tf.equal(y_true_mask, 1), dtype=tf.float32) + tf.constant(K.epsilon())
+
+    scores_imp = tf.boolean_mask(y_pred_mask, tf.equal(y_true, 0))
+    scores_gen = tf.boolean_mask(y_pred_mask, tf.equal(y_true, 1))
+
+    loop_vars = (tf.constant(0.0), tf.constant(1.0), tf.constant(0.0))
+    cond = lambda t, fpr, fnr: tf.greater_equal(fpr, fnr)
+    body = lambda t, fpr, fnr: (
+        t + 0.001,
+        tf.divide(tf.count_nonzero(tf.greater_equal(scores_imp, t), dtype=tf.float32), n_imp),
+        tf.divide(tf.count_nonzero(tf.less(scores_gen, t), dtype=tf.float32), n_gen)
+    )
+    t, fpr, fnr = tf.while_loop(cond, body, loop_vars, back_prop=False)
+    eer = (fpr + fnr) / 2
+
+    return eer
+
 
 # Loss functions
 ##########################################################################
 
 # [todo]
-def filter_predict_loss(alpha=0.5):
+def generalized_bce_loss(multiplier=1.0): 
+    """
+    ratio: the ratio between the size of majority class to that of the minority class
+    """
+    pass
+
+# [todo]
+def filter_predict_loss(alpha=0.5, weight_multiplier=1.0, r_th=0.5, from_logits=False):
     def filter_predict_loss_core(y_true, y_pred): 
         """
+
+        Dependency
+        ----------
+        from tensorflow.python.ops import clip_ops, math_ops, constant_op
 
         Memo
         ----
@@ -301,6 +458,16 @@ def filter_predict_loss(alpha=0.5):
         tf.reduce_sum(x, 1) ==> [3, 3]
         tf.reduce_sum(x, 1, keep_dims=True) ==> [[3], [3]]
         tf.reduce_sum(x, [0, 1]) ==> 6
+
+        2. binary cross entropy (different options)
+    
+           bce = tf.keras.losses.BinaryCrossentropy(from_logits=False) # f(y_true, y_pred) => shape:(), scalar
+           
+           By default, the following BCE functions will not apply reduce mean: 
+           
+           bce = tf.keras.metrics.binary_crossentropy
+           bce = K.binary_crossentropy
+
         """
         seq_len = tf.size(y_pred.shape[1]) # shape(y_pred): bsize, n_timesteps (nt), n_features (nf)
 
@@ -343,43 +510,62 @@ def filter_predict_loss(alpha=0.5):
 
         y_true_rating = ratings = rating_seq[:, :-1] # the rating part of the rating sequence
         # ... shape: (bsize, nt-1)
-        label = rating_seq[:, -1]
+        labels = rating_seq[:, -1]
         # ... shape: (bsize, )
 
-        # Loss criterion #1
-        # The sequence of mask values (mask_seq[:, :-1]) and the predicted values (y_pred[:, :, 0]) should combine 
-        # the probability scores (ratings) in a similar fashion that their results are as close as possible
-
-        # n_masked = K.sum( tf.dtypes.cast( K.equal(mask_values, 0), dtype = tf.float64 )) # needs to be float64 to be compatible with K.sum(x * y)
-        
-        # Take the "mask-average" of the probabilities as the final probability prediction, if, however, the mask is degenerative 
-        # (all zeros or masked), then take average of all probabilities
-        # ref_score = tf.where(K.equal(n_masked, seq_len), K.mean(ratings), K.sum(mask_values * ratigns)/n_masked)
-        # [criterion] ref_score ~ label_score? MSE loss 
-
-        # Loss criterion #2: the softmax-weighted average of the predicted mask values should be as close as possible to the class label
+        # ---------------------------------------------------
         predicted_mask_seq = y_pred[:, :, 0] # shape (bsize, nt)
         y_pred_mask = predicted_mask_seq[:, :-1] # shape (bsize, nt-1)
+        
+        # --- Loss criterion #1 --- 
+        # The sequence of mask values (mask_seq[:, :-1]) and the predicted values (y_pred[:, :, 0]) should combine 
+        # the probability scores (ratings) in a similar fashion, such that their results are as close as possible
+
+        # y_pred_mask = tf.where(tf.math.greater_equal(y_pred_mask, r_th), 1, 0)
+        # y_pred_mask = tf.dtypes.cast(y_pred_mask, dtype = tf.float64) # cast to float o.w. type mismatch in sum-product operation 
+
+        # mask_sum = K.sum(y_pred_mask, axis=-1) # shape: (bsize,), number of reliable entries (where mask value is 1) for each instance
+        # mask_sum_product = K.sum(y_pred_mask * y_true_rating, axis=-1) # shape: (bsize, )
+        
+        # Take the "masked average" of the probabilities as the final probability prediction, if, however, the mask is degenerative 
+        # (all zeros or masked), then take average of all probabilities
+        # label_scores = tf.where(K.equal(mask_sum, 0),    # if number of reliable entries is zero
+        #                             K.mean(y_true_rating, axis=-1), # take the mean of user ratings (BP probability scores)
+        #                                 mask_sum_product/mask_sum )  # otherwise, take the masked average (essentially 0-1 weighted average)
+        # [criterion] ref_score ~ label_score? MSE loss 
+
+        # --- Loss criterion #2 --- 
+        # the softmax-weighted average of the predicted mask values should be as close as possible to the class label
 
         # y_pred_dummy = predicted_mask_seq[:, -1] # the last element is just zero padding; its predicted value should be close to 0
-
-        weights = tf.nn.softmax(y_pred_mask, axis=-1) # convert to weights via softmax along the mask-value dimension
+        mask_weights = tf.nn.softmax(y_pred_mask, axis=-1) # convert to weights via softmax along the mask-value dimension
         # ... softmax helps to ensure that predicted mask values are summed to 1, resulting in valid weighted average of the ratings 
         # ... that remains a valid probaiblity score 
         # shape: (bsize, nt-1)
 
-        label_score = K.sum(weights * ratings, axis=-1) # the weighted average of the ratings should help predict the label
+        label_scores2 = K.sum(mask_weights * ratings, axis=-1) # the weighted average of the ratings should help predict the label
         # shape: (bsize, )
         
-        # Use binary cross entropy to measure the final loss (want `label_score` to be as close as possible to `label`)
-        bce = tf.keras.losses.BinaryCrossentropy(from_logits=False)
+        # ---------------------------------------------------
+        # Finally pass the target and output/y_pred to BCE loss 
 
-        # y_true_mask = tf.expand_dims(y_true_mask, axis=-1) # shape: (bsize, nt-1, 1)
-        # y_pred_mask = tf.expand_dims(y_pred_mask, axis=-1)
+        # Compute class weights
+        weights = tf.where(K.equal(labels, 1), weight_multiplier, 1.0) # minority has a proportionally larger weight (inversely proportional to class sample sizes)
+        weights = tf.dtypes.cast(weights, dtype = tf.float64)
 
-        # tf.print("y_true_mask", y_true_mask[1, :], output_stream=sys.stdout)
-        # tf.print("y_pred_mask", y_pred_mask[1, :], output_stream=sys.stdout)
-        return bce(y_true_mask, y_pred_mask) # alpha * bce(y_true_mask, y_pred_mask) + (1.0-alpha) * bce(label, label_score)
+        # BCE between true mask and predicted mask
+        bce_mask = tf.keras.metrics.binary_crossentropy(y_true_mask, y_pred_mask, axis=-1, from_logits=from_logits) # shape: (bsize, )
+        bce_mask = tf.dtypes.cast(bce_mask, dtype = tf.float64)
+
+        # BCE between true labels and mask-predicted labels
+        bce_label_pred = K.binary_crossentropy(labels, label_scores2) # shape: (bsize, )
+        # tf.keras.metrics.binary_crossentropy(labels, label_scores) # this will take the mean of individual BCE losses and results in a scalar
+
+        bce_mask_weighted = K.sum(bce_mask * weights)/K.sum(weights)
+        bce_label_pred_weighted =  K.sum(bce_label_pred * weights)/K.sum(weights)
+
+        return alpha * bce_mask_weighted + (1.0-alpha) * bce_label_pred_weighted
+        # return bce_mask_weighted
 
     return filter_predict_loss_core
 
@@ -744,8 +930,10 @@ def analyze_reestimated_matrices(train, test, meta, **kargs):
     ranking = {metric: [] for metric in target_metrics}
     for method, y_score in methods.items(): 
 
-        # Use fmax as the probability threshold
+        # Use fmax as the probability threshold or stay consistent with `policy_threshold`? 
         fmax, p_th = uclf.fmax_score_threshold(y_true, y_score, beta=1, pos_label=1)
+        # score_max, p_th = uc.estimate_score_and_threshold(y_true, y_score, policy=policy_threshold, pos_label=1)
+
         # Note: Other strategies are possible
         
         metric_scores, metric_labels = ev.calculate_all_metrics(y_true, y_score, p_th=p_th)

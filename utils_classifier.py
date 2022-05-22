@@ -357,6 +357,7 @@ def acc_max_score_threshold(labels, predictions, verbose=0, pos_label=1):
     # threshold = thresholds[np.argmax(accuracies)]
     return accuracies[imax], thresholds[imax]
 
+
 def fmax_score(labels, predictions, beta = 1.0, pos_label = 1):
     """
         Radivojac, P. et al. (2013). A Large-Scale Evaluation of Computational Protein Function Prediction. Nature Methods, 10(3), 221-227.

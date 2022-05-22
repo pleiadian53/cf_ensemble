@@ -1249,7 +1249,62 @@ def to_rating_matrix2(fold, **kargs):
     # return (R, T, L_train, L_test, U)  # U: users/classifiers
     return dsp.to_rating_matrix2(fold, **kargs)
 
-def estimateProbThresholds(R, L=[], pos_label=1, neg_label=0, policy='fmax', ratio_small_class=0.01):
+def estimate_proba_threshold(y_true, y_pred, policy='fmax', pos_label=1):
+    # NOTE: By the convention of Sklearn and perhaps most mainstream libraries, true labels (y_true) are 
+    #       typically provided as the first argument followed by predictions (y_pred); however, this is 
+    #       reverse to estimateProbThresholds()'s input order which takes in the rating matrix (analogous 
+    #       to y_pred but usually a 2D array rather than a 1D vector/ndarray), followed by the labels (L).
+
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    if y_true.ndim == 1 and y_pred.ndim == 1: 
+        p_thresholds = estimateProbThresholds(y_pred[:, None], y_true[:, None], policy=policy, pos_label=pos_label)
+        return p_thresholds[0]
+
+    if y_pred.ndim != 2: 
+        raise ValueError(f"[thresholding] `y_pred` must be either a 1D or 2D array but shape(y_pred)={y_pred.shape}")
+    if y_pred.shape[0] != len(y_true): 
+        raise ValueError(f"[thresholding] size(y_pred): {y_pred.shape[0]} is not consistent with size(y_true): {len(y_true)}")
+    # NOTE: y_pred goes in first followed by y_true
+    return estimateProbThresholds(y_pred, y_true, policy=policy, pos_label=pos_label)
+def estimate_score_and_threshold(y_true, y_pred, policy='fmax', pos_label=1, **kargs):
+    def map_metric_name(metric):
+        if metric.startswith('f'): 
+            return 'f1_score'
+        elif metric.startswith('auc'): 
+            return 'roc_auc_score'
+        elif metric.startswith(('acc', 'bal')):
+            return 'balanced_accuracy_score'
+        else: 
+            return 'accuracy_score'
+
+    import sklearn.metrics as sm
+    # from sklearn.metrics import accuracy_score, roc_auc_score, precision_score, recall_score, f1_score, balanced_accuracy_score
+    verbose = kargs.get('verbose', 0)
+    if y_true.ndim != 1 or y_pred.ndim != 1: 
+        raise ValueError
+    
+    p_th = estimate_proba_threshold(y_true, y_pred, policy=policy, pos_label=pos_label)
+
+    # Determine the class label predictions given the threshold
+    y_pred_label = np.zeros(len(y_pred), dtype='int')
+    y_pred_label[y_pred >= p_th] = pos_label
+
+    if policy == 'fmax':   
+        return sm.f1_score(y_true, y_pred_label), p_th
+        # return getattr(sklearn.metrics, 'roc_auc_score')(y_true, y_pred)
+    elif policy.startswith('auc'):
+        return sm.roc_auc_score(y_true, y_pred_label), p_th
+    elif policy.startswith(('acc', 'bal')):
+        return sm.balanced_accuracy_score(y_true, y_pred_label), p_th
+
+    # return a score based on a default performance measure
+    default_metric = map_metric_name(kargs.get("metric", 'f1'))
+    if verbose: 
+        print(f"[evaluate] Under policy={policy}, evaluate `y_pred` using metric={default_metric}")
+    return getattr(sm, map_metric_name(default_metric))(y_true, y_pred_label), p_th
+    
+def estimateProbThresholds(R, L=[], pos_label=1, policy='fmax', ratio_small_class=0.01):
     """
 
     Memo
@@ -1289,14 +1344,22 @@ def estimateProbThresholds(R, L=[], pos_label=1, neg_label=0, policy='fmax', rat
                    [ 9, 10, 12]])
 
     """
-    if not policy: 
-        if len(L) > 0:   
-            policy = 'prior'  
-        else: 
-            policy = 'ratio'  # unsupervised, given only an estimted ratio of the minority class (typically positive class)  
+    neg_label = 1 - pos_label
 
+   
+    # Ensure that both R and L (optionally) are of type ndarray
+    R = np.array(R)
+    L = np.array(L)
     if R.ndim == 1: 
         R = R.reshape(1, -1)  # Assuming that this rating matrix has only 1 user/classifier
+    if L.ndim > 1: # not a usual use case
+        if L.shape != R.shape: raise ValueError(f"Inconsistent shapes shape(R): {R.shape} != shape(L): {L.shape}")
+
+    if not policy: 
+        if len(L) > 0:   
+            policy = 'fmax'  
+        else: 
+            policy = 'ratio'  # unsupervised, given only an estimted ratio of the minority class (typically positive class)  
 
     thresholds = []
     if policy.startswith( ('prior', 'top' )):  # i.e. top k probabilities as positives where k = n_pos examples in the training split
@@ -1313,23 +1376,42 @@ def estimateProbThresholds(R, L=[], pos_label=1, neg_label=0, policy='fmax', rat
         # from evaluate import findOptimalCutoff   #  p_th <- f(y_true, y_score, metric='fmax', pos_label=1)
         # thresholds = findOptimalCutoff(L, R, metric=policy, beta=1.0, pos_label=pos_label) 
   
-        for i in range(R.shape[0]):  # one threshold per user/classifier
-            thresholds.append( 
-                uclf.fmax_threshold(L, R[i], pos_label=pos_label))
+        if L.ndim == 1:  # typical use case is that L is a 1D vector
+            for i in range(R.shape[0]):  # one threshold per user/classifier
+                thresholds.append( 
+                    uclf.fmax_threshold(L, R[i], pos_label=pos_label))
+        else: 
+            # if L.shape != R.shape: raise ValueError(f"Inconsistent shapes shape(R): {R.shape} != shape(L): {L.shape}")
+            for i in range(R.shape[0]):  # one threshold per user/classifier
+                thresholds.append( 
+                    uclf.fmax_threshold(L[i], R[i], pos_label=pos_label))
 
-    elif policy.startswith('auc'):
+    elif policy.startswith('auc'): # auc, auc_max
         import utils_classifier as uclf 
 
-        for i in range(R.shape[0]):  # one threshold per user/classifier
-            thresholds.append( 
-                uclf.auc_threshold(L, R[i], pos_label=pos_label))
+        if L.ndim == 1: 
+            for i in range(R.shape[0]):  # one threshold per user/classifier
+                thresholds.append( 
+                    uclf.auc_threshold(L, R[i], pos_label=pos_label))
+        else: 
+            for i in range(R.shape[0]):  # one threshold per user/classifier
+                thresholds.append( 
+                    uclf.auc_threshold(L[i], R[i], pos_label=pos_label))
 
     elif policy.startswith(('acc', 'bal')): # the threshold that max balanced accuracy
         import utils_classifier as uclf 
 
-        for i in range(R.shape[0]):  # one threshold per user/classifier
-            thresholds.append( 
-                uclf.acc_max_threshold(L, R[i], pos_label=pos_label))        
+        if L.ndim == 1: 
+            for i in range(R.shape[0]):  # one threshold per user/classifier
+                thresholds.append( 
+                    uclf.acc_max_threshold(L, R[i], pos_label=pos_label))     
+        else: 
+            for i in range(R.shape[0]):  # one threshold per user/classifier
+                thresholds.append( 
+                    uclf.acc_max_threshold(L[i], R[i], pos_label=pos_label))   
+
+    elif policy.startswith( ('uni', 'null', 'default') ): # uniform
+        thresholds = [0.5] * R.shape[0]
 
     elif policy == 'ratio':  # user provided an estimated ratio of the minority class, perhaps more conservative than 'prior' 
         assert ratio_small_class > 0, "'ratio_small_class' was not set ... "
@@ -5499,6 +5581,9 @@ def estimate_pref_threshold(Th, T, L=[], p_threshold=[], ratio_small_class=0.1,
         min_score=min_score, max_score=max_score,
             message=message)
     return Thb, pref_threshold, rc
+# [alias]
+def infer_pref_threshold(Th, T, **kargs): 
+    return estimate_pref_threshold(Th, T, **kargs)    
 
 def calibrate_preference(Xpf, step=0.01, **kargs):
     """
