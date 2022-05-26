@@ -3,6 +3,11 @@ import tensorflow as tf
 from keras import backend as K
 
 
+def balanced_accuracy(y_true, y_pred):
+	r = recall(y_true, y_pred)
+	s = specificity(y_true, y_pred)
+	return (r + s)/2.0
+
 def recall(y_true, y_pred):
     true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
     possible_positives = K.sum(K.round(K.clip(y_true, 0, 1)))

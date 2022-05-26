@@ -289,6 +289,17 @@ def predict_by_knn(model, model_knn, R, T, L_train, L_test, C, Pc, codes={}, pos
 # Custom metrics 
 ##########################################################################
 
+def balanced_accuracy(y_true, y_pred):
+    """
+
+    Reference
+    ---------
+    1. https://github.com/tensorflow/model-analysis/blob/v0.39.0/tensorflow_model_analysis/metrics/confusion_matrix_metrics.py#L1754-L1792
+    """
+    r = recall(y_true, y_pred)
+    s = specificity(y_true, y_pred)
+    return (r + s)/2.0
+
 
 # For seq2seq model when `y_true` is augmented (first feature dimension: mask values, second feature dimension: ratings + class label)
 def recall(y_true, y_pred):
@@ -299,13 +310,12 @@ def recall(y_true, y_pred):
     
     mask_seq = y_true[:, :, 0] 
     y_true_mask = mask_values = mask_seq[:, :-1] # shape: (bsize, nt-1)
-
     predicted_mask_seq = y_pred[:, :, 0] # shape (bsize, nt)
     y_pred_mask = predicted_mask_seq[:, :-1] # shape (bsize, nt-1)
 
     true_positives = K.sum(K.round(K.clip(y_true_mask * y_pred_mask, 0, 1))) # K.clip ensures that tensor elements are bounded within [0, 1]
-    possible_positives = K.sum(K.round(K.clip(y_true_mask, 0, 1)))
-    recall_keras = true_positives / (possible_positives + K.epsilon())
+    positives = K.sum(K.round(K.clip(y_true_mask, 0, 1)))
+    recall_keras = true_positives / (positives + K.epsilon())
     return recall_keras
 
 def precision(y_true, y_pred):
@@ -529,9 +539,17 @@ def filter_predict_loss(alpha=0.5, weight_multiplier=1.0, r_th=0.5, from_logits=
         
         # Take the "masked average" of the probabilities as the final probability prediction, if, however, the mask is degenerative 
         # (all zeros or masked), then take average of all probabilities
+
         # label_scores = tf.where(K.equal(mask_sum, 0),    # if number of reliable entries is zero
         #                             K.mean(y_true_rating, axis=-1), # take the mean of user ratings (BP probability scores)
         #                                 mask_sum_product/mask_sum )  # otherwise, take the masked average (essentially 0-1 weighted average)
+
+        # label_pred_mean = K.mean(y_true_rating, axis=-1)
+        # label_pred_masked_mean = mask_sum_product/(mask_sum+K.epsilon())
+        # is_degenerated = tf.dtypes.cast( K.equal(mask_sum, 0), dtype = tf.float64 ) # is_degenerated; use average over all ratings (BP predictions)
+        # is_normal = tf.dtypes.cast( K.greater(mask_sum, 0), dtype = tf.float64 ) # is normal; use masked average
+        # label_scores = is_normal * label_pred_masked_mean + is_degenerated * label_pred_mean
+        
         # [criterion] ref_score ~ label_score? MSE loss 
 
         # --- Loss criterion #2 --- 

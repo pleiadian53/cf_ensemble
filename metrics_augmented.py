@@ -25,6 +25,18 @@ from typing import Dict, Text
 # from collections import namedtuple
 
 
+def balanced_accuracy(y_true, y_pred):
+    """
+
+    Reference
+    ---------
+    1. https://github.com/tensorflow/model-analysis/blob/v0.39.0/tensorflow_model_analysis/metrics/confusion_matrix_metrics.py#L1754-L1792
+    """
+    r = recall(y_true, y_pred)
+    s = specificity(y_true, y_pred)
+    return (r + s)/2.0
+
+
 # For seq2seq model when `y_true` is augmented (first feature dimension: mask values, second feature dimension: ratings + class label)
 def recall(y_true, y_pred):
 
