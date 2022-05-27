@@ -1386,7 +1386,7 @@ def estimateProbThresholds(R, L=[], pos_label=1, policy='fmax', ratio_small_clas
                 thresholds.append( 
                     uclf.fmax_threshold(L[i], R[i], pos_label=pos_label))
 
-    elif policy.startswith('auc'): # auc, auc_max
+    elif policy.startswith('auc'): # the threshold that maximizes auc (auc_max)
         import utils_classifier as uclf 
 
         if L.ndim == 1: 
