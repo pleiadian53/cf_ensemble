@@ -8,5 +8,5 @@ Without loss of generality, the ensemble learning process can be divided into tw
 
 More precisely, this is an additional layer of meta-learning through transforming the probability predictions at the base level toward increasing the reliability of their class conditional probability estimates, which then potentially benefit the ensemble integration stage as well as providing additional features such as model interpretation, often desirable in the context of biomedical data analytics. For instance, identifying group structures in the training data in contexts of how they are being classified by the ensemble helps to identify the homogeneous subsets that share similar biomedical properties as well as training instances that would potentially pose challenges to the ensemble. To achieve both predictive performance improvements and model interpretability, here we will demonstrate a **latent factor-based collaborative filtering (CF) approach** to realizing the ensemble transformation stage. 
 
-(to be continued)
+... to be continued
 
