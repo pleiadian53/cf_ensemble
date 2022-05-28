@@ -1,5 +1,18 @@
 
 
+
+
+# Create a new branch (proba-filter)
+
+project dir: .../machine_learning_examples/cf_ensemble
+check: 
+  git reflog
+  git log --oneline
+  
+- changed default branch to proba-filter
+
+
+
 # Different ways to formulate final predictions via seq2seq model
 
 
