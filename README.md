@@ -13,10 +13,6 @@ For more details, please go through [this introductory document](CF-EnsembleLear
 
 Optionally, you could also go through the [slides](CF-based-ensemble-learning-slides.pdf). 
 
-The primiary optimization objective that we care about in CF ensemble learning is given by: 
-![image](https://user-images.githubusercontent.com/1761957/188761379-b2da8d37-e834-41bf-b1a7-50dd9dfff7ce.png)
-
-
 For example prototypes and demo codes, please go through the notebook series 1-5: 
 
 1. [Optimization via alternating least sequare (ALS)](Demo-Part1-CF_with_ALS.ipynb)
