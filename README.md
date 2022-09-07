@@ -11,12 +11,17 @@ More precisely, this is an additional layer of meta-learning through transformin
 
 For more details, please go through [this introductory document](CF-EnsembleLearning-Intro.pdf). 
 
-For example prototypes, please go through Demo 1-5 (Juypter notebooks) starting from `Demo-Part1-CF_with_ALS`: 
+Optionally, you could also go through the [slides](CF-based-ensemble-learning-slides.pdf). 
+
+L(X,Y)=∑_(u,i)▒〖c_ui (r_ui-x_u^T∙y_i )^2 〗+λ(∑_u▒‖x_u ‖^2 +∑_i▒‖y_i ‖^2 )![image](https://user-images.githubusercontent.com/1761957/188761379-b2da8d37-e834-41bf-b1a7-50dd9dfff7ce.png)
+
+
+For example prototypes and demo codes, please go through the notebook series 1-5: 
 
 1. [Optimization via alternating least sequare (ALS)](Demo-Part1-CF_with_ALS.ipynb)
 2. [The role of loss function in CF ensemble learning](Demo-Part2-The_Role_of_Loss_Function_in_CF_Ensemble.ipynb)
 3. [CF ensemble with K nearest neighbors](Demo-Part3-CF_Ensemble_with_kNNs.ipynb)
-4. [CF ensemble with stackers](Demo-Part4-CF_Stacker.ipynb)
+4. [CF ensemble for stacked generalization](Demo-Part4-CF_Stacker.ipynb)
 5. [CF ensemble with probability filtering and sequence models](Demo-Part5b-Probability_Filtering_via_Custom_Loss.ipynb)
 
 ... to be continued
