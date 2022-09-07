@@ -11,7 +11,7 @@ More precisely, this is an additional layer of meta-learning through transformin
 
 For more details, please go through [this introductory document](CF-EnsembleLearning-Intro.pdf). 
 
-Optionally, you could also go through the [slides](CF-based-ensemble-learning-slides.pdf). 
+Optionally, you could also go through the [slides](https://www.slideshare.net/pleiadian53/metalearning-via-latentfactorbased-collaborative-filtering). 
 
 For example prototypes and demo codes, please go through the notebook series 1-5: 
 
