@@ -33,7 +33,7 @@ For example prototypes and demo codes, please go through the notebook series 1-5
 
 In CF-based meta learning, base models play the role of “users” {u} while data points play the role of “items” {i}, where we borrow a convention from recommender systems by using u to index into classifiers/users and i to index into data/items. A classifier assigns ratings on data items in the sense that the rating tells us how likely a data point is positive in terms of a conditional probability score. To realize an effective ensemble transformation (toward better and reliable probability prediction ultimately), we seek to solve an optimization problem of the following form: 
 
-J(X,Y)=∑_(u,i)▒〖c_ui∙loss(r_ui,f(x_u 〖,y〗_i )) 〗+regularization![image](https://user-images.githubusercontent.com/1761957/188937553-e74e9837-51cf-4c7e-8ef9-66146ceb8d95.png)
+![image](https://user-images.githubusercontent.com/1761957/188937553-e74e9837-51cf-4c7e-8ef9-66146ceb8d95.png)
 
 
 
