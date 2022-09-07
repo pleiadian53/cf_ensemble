@@ -1,4 +1,4 @@
-# Collaborative Filtering-Enhanced Ensemble Learning
+# Meta-learning via Latent-Factor-Based Collaborative Filtering
 
 Classification problems in biomedical domains are challenging due to the complexity inherent in the relationship between biological concepts and explanatory variables as well as the lack of consensus in best classifiers, being problem-dependent. From data science perspective, the contributing factors to the modeling difficulties largely arise from prevalence of class imbalance, missing values, imprecise measurements introducing noises, and far-from-ideal predictor variables due to incomplete knowledge of the underlying processes per se. 
 
@@ -20,6 +20,12 @@ For example prototypes and demo codes, please go through the notebook series 1-5
 3. [CF ensemble with K nearest neighbors](Demo-Part3-CF_Ensemble_with_kNNs.ipynb)
 4. [CF ensemble for stacked generalization](Demo-Part4-CF_Stacker.ipynb)
 5. [CF ensemble with probability filtering and sequence models](Demo-Part5b-Probability_Filtering_via_Custom_Loss.ipynb)
+
+
+# Basic Workflow
+
+<img width="328" alt="image" src="https://user-images.githubusercontent.com/1761957/188764919-f2217d9f-c451-4c51-9b34-cde9f8cdc7b4.png">
+
 
 ... to be continued
 
