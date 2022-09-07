@@ -31,7 +31,7 @@ For example prototypes and demo codes, please go through the notebook series 1-5
 
 ## Optimization 
 
-In CF-based meta learning, base models play the role of “users” {u} while data points play the role of “items” {i}, where we borrow a convention from recommender systems by using u to index into classifiers/users and i to index into data/items. A classifier assigns ratings on data items in the sense that the rating tells us how likely a data point is positive in terms of a conditional probability score. To realize an effective ensemble transformation (toward better and reliable probability prediction ultimately), we seek to solve an optimization problem of the following form: 
+In CF-based meta learning, base models play the role of “users” _{u}_ while data points play the role of “items” _{i}_, where we borrow a convention from recommender systems by using _u_ to index into classifiers/users and _i_ to index into data/items. A classifier assigns ratings on data items in the sense that the rating tells us how likely a data point is positive in terms of a conditional probability score. To realize an effective ensemble transformation (toward better and reliable probability prediction ultimately), we seek to solve an optimization problem of the following form: 
 
 ![image](https://user-images.githubusercontent.com/1761957/188937553-e74e9837-51cf-4c7e-8ef9-66146ceb8d95.png)
 
