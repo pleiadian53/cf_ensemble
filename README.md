@@ -35,7 +35,7 @@ In CF-based meta learning, base models play the role of “users” {u} while da
 
 ![image](https://user-images.githubusercontent.com/1761957/188937553-e74e9837-51cf-4c7e-8ef9-66146ceb8d95.png)
 
-
+Please refer to [this document](CFEnsembleLearning-optimization.pdf) for more details on the notation and the interpretation. 
 
 
 ... to be continued
