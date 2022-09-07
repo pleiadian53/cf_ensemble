@@ -13,7 +13,7 @@ More precisely, this is an additional layer of meta-learning through transformin
 
 For more details, please go through [this introductory document](CF-EnsembleLearning-Intro.pdf). 
 
-Optionally, you could also go through the [slides](https://www.slideshare.net/pleiadian53/metalearning-via-latentfactorbased-collaborative-filtering). 
+Optionally, you could also go through the [slides](https://www.slideshare.net/pleiadian53/metalearning-via-latentfactorbased-collaborative-filtering-252872052). 
 
 For example prototypes and demo codes, please go through the notebook series 1-5: 
 
@@ -27,6 +27,13 @@ For example prototypes and demo codes, please go through the notebook series 1-5
 ## Basic Workflow
 
 <img width="328" alt="image" src="https://user-images.githubusercontent.com/1761957/188764919-f2217d9f-c451-4c51-9b34-cde9f8cdc7b4.png">
+
+
+## Optimization 
+
+In CF-based meta learning, base models play the role of “users” {u} while data points play the role of “items” {i}, where we borrow a convention from recommender systems by using u to index into classifiers/users and i to index into data/items. A classifier assigns ratings on data items in the sense that the rating tells us how likely a data point is positive in terms of a conditional probability score. To realize an effective ensemble transformation (toward better and reliable probability prediction ultimately), we seek to solve an optimization problem of the following form: 
+
+                ![image](https://user-images.githubusercontent.com/1761957/188937294-29a61f80-b0db-48b2-88f4-3c97ea92a764.png)
 
 
 
