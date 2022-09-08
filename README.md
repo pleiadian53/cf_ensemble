@@ -31,7 +31,7 @@ For example prototypes and demo codes, please go through the notebook series 1-5
 
 ## Optimization 
 
-In CF-based meta learning, base models play the role of “users” _{u}_ while data points play the role of “items” _{i}_, where we borrow a convention from recommender systems by using _u_ to index into classifiers/users and _i_ to index into data/items. A classifier assigns "ratings" on data items in the sense that the rating tells us how likely a data point is positive in terms of a conditional probability score. To realize an effective ensemble transformation (see [this](CF-EnsembleLearning-Intro.pdf)), we seek to solve the optimization problem, _argmin<X,Y> J(X, Y)_, where _J(X,Y)_ is a cost function on latent matrices X and Y, and takes the following form:
+In CF-based meta learning, base models play the role of “users” _{u}_ while data points play the role of “items” _{i}_, where we have borrowed a convention from recommender systems by using _u_ to denote a classifier (as a *u*ser) and _i_ to denote a data point (as an *i*tem). To draw an analogy between **binary classification** and **recommender system**, we can think of a classifier as assigning "ratings" on data items when making predictions in the sense that the rating tells us how likely a data point is positive (_y=1_) in terms of a conditional probability score (_P(y=1|x)_). To realize an effective ensemble transformation (see [this](CF-EnsembleLearning-Intro.pdf)), we seek to solve a family of optimization problems, _argmin<X,Y> J(X, Y)_, where _J(X,Y)_ is a **cost function** on latent matrices X and Y, and takes the following form:
 
 ![image](https://user-images.githubusercontent.com/1761957/188937553-e74e9837-51cf-4c7e-8ef9-66146ceb8d95.png)
 
