@@ -37,6 +37,5 @@ In CF-based meta learning, base models play the role of “users” _{u}_ while 
 
 Please refer to [this document](CFEnsembleLearning-optimization.pdf) for more details on the notation and the interpretation. 
 
-$x^{data}$
-... to be continued
+\b... to be continued
 
