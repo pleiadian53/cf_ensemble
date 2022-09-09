@@ -15,7 +15,7 @@ For more details, please go through [this introductory document](CF-EnsembleLear
 
 Optionally, you could also go through the [slides](https://www.slideshare.net/pleiadian53/metalearning-via-latentfactorbased-collaborative-filtering-252872052). 
 
-For example prototypes and demo codes, please go through the notebook series 1-5: 
+This work is currently still under development. To see prototypes and examples, please go through the notebook series 1-5: 
 
 1. [Optimization via alternating least sequare (ALS)](Demo-Part1-CF_with_ALS.ipynb)
 2. [The role of loss function in CF ensemble learning](Demo-Part2-The_Role_of_Loss_Function_in_CF_Ensemble.ipynb)
